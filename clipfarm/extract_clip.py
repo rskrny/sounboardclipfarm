@@ -83,9 +83,9 @@ def extract(request: ClipRequest, output_path: str) -> ClipResult:
 
     os.makedirs(os.path.dirname(os.path.abspath(output_path)), exist_ok=True)
 
-    # Map bit depth to ffmpeg sample format
-    bit_fmt = {8: "u8", 16: "s16", 24: "s24", 32: "s32"}.get(
-        request.bit_depth, "s16"
+    # Map bit depth to ffmpeg PCM codec name (little-endian)
+    bit_fmt = {8: "u8", 16: "s16le", 24: "s24le", 32: "s32le"}.get(
+        request.bit_depth, "s16le"
     )
 
     cmd = [

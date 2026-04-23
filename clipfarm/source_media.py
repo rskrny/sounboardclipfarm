@@ -139,53 +139,7 @@ class YouTubeSource:
         try:
             out_dir = tempfile.mkdtemp(prefix="clipfarm_yt_")
             out_template = os.path.join(out_dir, "%(id)s.%(ext)s")
-            # Also dump metadata so we can read the license field
-            meta_file = os.path.join(out_dir, "meta.json")
             cmd = [
-                "yt-dlp",
-                "--no-playlist",
-                "--format", "bestaudio/best",
-                "--extract-audio",
-                "--audio-format", "mp3",
-                "--output", out_template,
-                "--quiet",
-                "--dump-single-json",
-            ]
-            if cc_only:
-                cmd += ["--match-filter", "license^=creativecommons"]
-            cmd.append(query)
-
-            # First: dump metadata only to check rights before downloading
-            meta_cmd = [
-                "yt-dlp", "--no-playlist", "--quiet",
-                "--dump-single-json",
-            ]
-            if cc_only:
-                meta_cmd += ["--match-filter", "license^=creativecommons"]
-            meta_cmd.append(query)
-
-            import json
-            meta_result = subprocess.run(
-                meta_cmd, capture_output=True, text=True, timeout=30
-            )
-            if meta_result.returncode != 0 or not meta_result.stdout.strip():
-                return None
-
-            try:
-                meta = json.loads(meta_result.stdout)
-            except json.JSONDecodeError:
-                return None
-
-            video_id = meta.get("id", "unknown")
-            video_title = meta.get("title", title)
-            license_str = meta.get("license") or ""
-            uploader = meta.get("uploader", "unknown")
-            webpage_url = meta.get("webpage_url", f"https://youtube.com/watch?v={video_id}")
-
-            rights = _classify_yt_rights(license_str, uploader, webpage_url)
-
-            # Now download audio
-            dl_cmd = [
                 "yt-dlp", "--no-playlist",
                 "--format", "bestaudio/best",
                 "--extract-audio", "--audio-format", "mp3",
@@ -193,11 +147,11 @@ class YouTubeSource:
                 "--quiet",
             ]
             if cc_only:
-                dl_cmd += ["--match-filter", "license^=creativecommons"]
-            dl_cmd.append(query)
+                cmd += ["--match-filter", "license^=creativecommons"]
+            cmd.append(query)
 
-            dl_result = subprocess.run(dl_cmd, capture_output=True, text=True, timeout=180)
-            if dl_result.returncode != 0:
+            result = subprocess.run(cmd, capture_output=True, text=True, timeout=180)
+            if result.returncode != 0:
                 return None
 
             files = [
@@ -212,60 +166,31 @@ class YouTubeSource:
             if duration == 0.0:
                 return None
 
+            # Classify by search pass: CC filter = allowed_with_conditions; no filter = review_needed
+            if cc_only:
+                rights = RightsInfo(
+                    policy="allowed_with_conditions",
+                    source_detail="creative_commons_youtube",
+                    provenance=f"yt-dlp CC-filtered search: {query}",
+                    conditions="Attribution required per CC license terms.",
+                )
+            else:
+                rights = RightsInfo(
+                    policy="review_needed",
+                    source_detail="no_license_verified",
+                    provenance=f"yt-dlp search: {query}",
+                    conditions="No license verified. Review rights before distribution.",
+                )
+
             return MediaResult(
                 file_path=local_path,
-                title=video_title,
+                title=title,
                 source="youtube",
                 duration_seconds=duration,
                 rights=rights,
             )
         except Exception:
             return None
-
-
-def _classify_yt_rights(license_str: str, uploader: str, url: str) -> RightsInfo:
-    """Map yt-dlp license metadata to an explicit RightsInfo policy."""
-    ls = license_str.lower()
-    provenance = f"yt-dlp metadata: uploader={uploader!r}, url={url}, license={license_str!r}"
-
-    if "creativecommons.org/licenses/by/4" in ls or "creativecommons.org/licenses/by/2" in ls:
-        return RightsInfo(
-            policy="allowed",
-            source_detail=f"CC-BY ({license_str})",
-            provenance=provenance,
-            conditions="Attribution required: credit the uploader.",
-        )
-    if "creativecommons.org/publicdomain/zero" in ls or "cc0" in ls:
-        return RightsInfo(
-            policy="allowed",
-            source_detail="CC0 / public domain dedication",
-            provenance=provenance,
-        )
-    if "creativecommons" in ls and "nc" in ls:
-        return RightsInfo(
-            policy="allowed_with_conditions",
-            source_detail=f"CC Non-Commercial ({license_str})",
-            provenance=provenance,
-            conditions="Non-commercial use only. Attribution required.",
-        )
-    if "creativecommons" in ls:
-        return RightsInfo(
-            policy="allowed_with_conditions",
-            source_detail=f"Creative Commons ({license_str})",
-            provenance=provenance,
-            conditions="Review specific CC license terms before use.",
-        )
-    # No explicit license detected — must not be promoted to allowed
-    return RightsInfo(
-        policy="review_needed",
-        source_detail="no_license_detected",
-        provenance=provenance,
-        conditions=(
-            "No explicit license found. Verify rights before use. "
-            "May qualify as fair use for non-commercial/transformative purposes — "
-            "human review required."
-        ),
-    )
 
 
 def resolve_media(
