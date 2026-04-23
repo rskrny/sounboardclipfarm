@@ -50,20 +50,21 @@ def check(
     has_episode_scope = (season is not None) or (episode is not None) or has_local_file
 
     # Rule 1: TV series with no episode scope and no local file     
-    # → ambiguous; can't reliably locate a single quote across hundreds of episodes
+    # (Non-blocking: warn and attempt discovery, but local file is better)
     if is_tv and not has_episode_scope:
         return PreflightResult(
             decision="needs_episode_scope",
             user_message=(
                 f"'{title}' looks like a TV series. "
-                "TV quotes can appear across many episodes, so we need more context to find the right one. "
-                "Either upload the specific episode file, or specify a season and episode number."
+                "Since TV quotes can appear across many episodes, auto-discovery is difficult. "
+                "We will try to find a match, but for the best results, please specify a season/episode "
+                "or upload the specific media file you have."
             ),
             diagnostic_reason=(
                 f"media_type={'tv_series' if media_type == 'tv_series' else 'inferred_tv'}; "
                 f"no season/episode/local_file provided; quote '{quote}' is ambiguous across episodes"
             ),
-            blocking=True,
+            blocking=False, # CHANGED: No longer blocking.
         )
 
     # Rule 2: High-risk commercial content (No local file)
