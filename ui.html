@@ -1,0 +1,476 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Soundboard Clip Farm</title>
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+    :root {
+      --bg: #0f0f11;
+      --surface: #1a1a1f;
+      --border: #2a2a32;
+      --accent: #7c6af7;
+      --accent-dim: #4a3fb5;
+      --text: #e8e8f0;
+      --text-dim: #888898;
+      --green: #4ade80;
+      --yellow: #fbbf24;
+      --red: #f87171;
+      --radius: 10px;
+      --font: 'Inter', system-ui, sans-serif;
+    }
+
+    body {
+      background: var(--bg);
+      color: var(--text);
+      font-family: var(--font);
+      min-height: 100vh;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      padding: 40px 16px 80px;
+    }
+
+    h1 {
+      font-size: 1.7rem;
+      font-weight: 700;
+      letter-spacing: -0.5px;
+      margin-bottom: 4px;
+    }
+    .subtitle { color: var(--text-dim); font-size: 0.92rem; margin-bottom: 36px; }
+
+    .card {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      padding: 28px;
+      width: 100%;
+      max-width: 560px;
+    }
+
+    label {
+      display: block;
+      font-size: 0.82rem;
+      font-weight: 600;
+      color: var(--text-dim);
+      letter-spacing: 0.04em;
+      text-transform: uppercase;
+      margin-bottom: 6px;
+    }
+
+    input, select {
+      width: 100%;
+      background: var(--bg);
+      border: 1px solid var(--border);
+      border-radius: 7px;
+      color: var(--text);
+      font-family: var(--font);
+      font-size: 0.95rem;
+      padding: 10px 13px;
+      outline: none;
+      transition: border-color 0.15s;
+    }
+    input:focus, select:focus { border-color: var(--accent); }
+
+    .field { margin-bottom: 18px; }
+    .hint { font-size: 0.78rem; color: var(--text-dim); margin-top: 5px; }
+
+    .row { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; }
+
+    details summary {
+      cursor: pointer;
+      font-size: 0.82rem;
+      color: var(--text-dim);
+      letter-spacing: 0.03em;
+      text-transform: uppercase;
+      font-weight: 600;
+      margin-bottom: 14px;
+      list-style: none;
+      display: flex;
+      align-items: center;
+      gap: 6px;
+    }
+    details summary::before { content: '▸'; transition: transform 0.15s; }
+    details[open] summary::before { transform: rotate(90deg); }
+
+    button {
+      width: 100%;
+      padding: 12px;
+      background: var(--accent);
+      border: none;
+      border-radius: 8px;
+      color: #fff;
+      font-family: var(--font);
+      font-size: 1rem;
+      font-weight: 600;
+      cursor: pointer;
+      transition: background 0.15s, opacity 0.15s;
+      margin-top: 6px;
+    }
+    button:hover:not(:disabled) { background: #9181ff; }
+    button:disabled { opacity: 0.45; cursor: not-allowed; }
+
+    /* Status card */
+    #status-card {
+      display: none;
+      width: 100%;
+      max-width: 560px;
+      margin-top: 20px;
+    }
+
+    .status-header {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      margin-bottom: 16px;
+    }
+    .status-dot {
+      width: 10px; height: 10px;
+      border-radius: 50%;
+      background: var(--text-dim);
+      flex-shrink: 0;
+    }
+    .status-dot.running { background: var(--yellow); animation: pulse 1s ease-in-out infinite; }
+    .status-dot.succeeded { background: var(--green); }
+    .status-dot.failed { background: var(--red); }
+
+    @keyframes pulse {
+      0%, 100% { opacity: 1; }
+      50% { opacity: 0.35; }
+    }
+
+    .stage-label {
+      font-size: 0.8rem;
+      font-weight: 700;
+      letter-spacing: 0.08em;
+      text-transform: uppercase;
+      color: var(--accent);
+    }
+    .progress-msg {
+      font-size: 0.92rem;
+      color: var(--text-dim);
+      margin-top: 3px;
+      min-height: 1.2em;
+    }
+
+    .diagnostics {
+      margin-top: 14px;
+      border-left: 2px solid var(--border);
+      padding-left: 14px;
+      max-height: 140px;
+      overflow-y: auto;
+      scrollbar-width: thin;
+    }
+    .diag-line {
+      font-size: 0.78rem;
+      color: var(--text-dim);
+      padding: 2px 0;
+      font-family: 'Fira Mono', monospace;
+    }
+    .diag-line .stage-tag {
+      color: var(--accent);
+      font-weight: 700;
+      margin-right: 6px;
+    }
+
+    /* Result block */
+    #result-block { display: none; margin-top: 18px; }
+
+    .result-grid {
+      display: grid;
+      grid-template-columns: auto 1fr;
+      gap: 4px 12px;
+      font-size: 0.88rem;
+      margin-bottom: 16px;
+    }
+    .rk { color: var(--text-dim); font-weight: 600; }
+    .rv { color: var(--text); }
+
+    .rights-badge {
+      display: inline-block;
+      padding: 2px 9px;
+      border-radius: 20px;
+      font-size: 0.72rem;
+      font-weight: 700;
+      letter-spacing: 0.05em;
+      text-transform: uppercase;
+    }
+    .rights-allowed { background: #14532d; color: var(--green); }
+    .rights-conditions { background: #78350f; color: var(--yellow); }
+    .rights-review { background: #7c2d12; color: #fb923c; }
+
+    #download-btn {
+      background: var(--green);
+      color: #052e16;
+      font-weight: 700;
+      margin-top: 0;
+    }
+    #download-btn:hover { background: #86efac; }
+
+    .error-box {
+      background: #1f0a0a;
+      border: 1px solid #7f1d1d;
+      border-radius: 7px;
+      padding: 14px;
+      font-size: 0.88rem;
+      color: var(--red);
+      white-space: pre-wrap;
+      word-break: break-word;
+      margin-top: 12px;
+    }
+
+    .server-url-hint {
+      text-align: center;
+      font-size: 0.78rem;
+      color: var(--text-dim);
+      margin-bottom: 20px;
+    }
+    .server-url-hint input {
+      width: auto;
+      display: inline;
+      padding: 4px 8px;
+      font-size: 0.78rem;
+      margin-left: 6px;
+    }
+  </style>
+</head>
+<body>
+
+  <h1>🎬 Soundboard Clip Farm</h1>
+  <p class="subtitle">Extract any movie or TV quote as a WAV audio clip.</p>
+
+  <div class="server-url-hint">
+    API server: <input id="server-url" value="http://127.0.0.1:8000" title="Change if your server runs on a different port" />
+  </div>
+
+  <div class="card">
+    <div class="field">
+      <label>Movie or TV Show</label>
+      <input id="movie" type="text" placeholder="e.g. The Big Lebowski" autocomplete="off" />
+    </div>
+
+    <div class="field">
+      <label>Quote or Phrase</label>
+      <input id="quote" type="text" placeholder="e.g. The dude abides" autocomplete="off" />
+    </div>
+
+    <div class="field">
+      <label>Output filename</label>
+      <input id="output" type="text" placeholder="e.g. dude_abides.wav" value="clip.wav" />
+      <div class="hint">Saved on the server. Use the download button when done.</div>
+    </div>
+
+    <details>
+      <summary>Advanced options</summary>
+
+      <div class="field">
+        <label>Local media file path (optional)</label>
+        <input id="file" type="text" placeholder="/path/to/movie.mp4" />
+        <div class="hint">Required for mainstream copyrighted titles. Most reliable.</div>
+      </div>
+
+      <div class="field">
+        <label>Local SRT subtitle file (optional)</label>
+        <input id="srt" type="text" placeholder="/path/to/movie.srt" />
+      </div>
+
+      <div class="row">
+        <div class="field">
+          <label>Sample rate (Hz)</label>
+          <select id="sample-rate">
+            <option value="44100" selected>44100 Hz</option>
+            <option value="48000">48000 Hz</option>
+            <option value="22050">22050 Hz</option>
+            <option value="16000">16000 Hz</option>
+          </select>
+        </div>
+        <div class="field">
+          <label>Channels</label>
+          <select id="channels">
+            <option value="1" selected>Mono</option>
+            <option value="2">Stereo</option>
+          </select>
+        </div>
+      </div>
+
+      <div class="row">
+        <div class="field">
+          <label>Pad before (ms)</label>
+          <input id="pad-before" type="number" value="200" min="0" max="2000" />
+        </div>
+        <div class="field">
+          <label>Pad after (ms)</label>
+          <input id="pad-after" type="number" value="200" min="0" max="2000" />
+        </div>
+      </div>
+    </details>
+
+    <button id="extract-btn" onclick="startExtraction()">Extract Clip</button>
+  </div>
+
+  <!-- Status card -->
+  <div class="card" id="status-card">
+    <div class="status-header">
+      <div class="status-dot" id="status-dot"></div>
+      <div>
+        <div class="stage-label" id="stage-label">—</div>
+        <div class="progress-msg" id="progress-msg">Starting…</div>
+      </div>
+    </div>
+    <div class="diagnostics" id="diagnostics"></div>
+
+    <div id="result-block">
+      <div class="result-grid" id="result-grid"></div>
+      <button id="download-btn" style="display:none" onclick="downloadClip()">⬇ Download WAV</button>
+    </div>
+
+    <div class="error-box" id="error-box" style="display:none"></div>
+  </div>
+
+  <script>
+    let currentJobId = null;
+    let pollTimer = null;
+    let serverUrl = () => document.getElementById('server-url').value.replace(/\/$/, '');
+
+    function startExtraction() {
+      const movie  = document.getElementById('movie').value.trim();
+      const quote  = document.getElementById('quote').value.trim();
+      const output = document.getElementById('output').value.trim() || 'clip.wav';
+
+      if (!movie || !quote) {
+        alert('Please enter both a movie title and a quote.');
+        return;
+      }
+
+      const body = {
+        movie,
+        quote,
+        output_path: output,
+        local_file:  document.getElementById('file').value.trim() || null,
+        local_srt:   document.getElementById('srt').value.trim()  || null,
+        sample_rate: parseInt(document.getElementById('sample-rate').value),
+        channels:    parseInt(document.getElementById('channels').value),
+        padding_before_ms: parseInt(document.getElementById('pad-before').value),
+        padding_after_ms:  parseInt(document.getElementById('pad-after').value),
+      };
+
+      setUiRunning(true);
+      showStatusCard();
+      clearDiagnostics();
+      hideResult();
+      hideError();
+
+      fetch(`${serverUrl()}/extract`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(body),
+      })
+      .then(r => r.json())
+      .then(data => {
+        currentJobId = data.job_id;
+        schedulePoll();
+      })
+      .catch(err => {
+        showError(`Could not reach the API server.\n\n${err}\n\nMake sure 'python serve.py' is running at ${serverUrl()}`);
+        setUiRunning(false);
+      });
+    }
+
+    function schedulePoll() {
+      clearTimeout(pollTimer);
+      pollTimer = setTimeout(pollJob, 800);
+    }
+
+    function pollJob() {
+      if (!currentJobId) return;
+      fetch(`${serverUrl()}/jobs/${currentJobId}`)
+        .then(r => r.json())
+        .then(job => {
+          updateStatus(job);
+          if (job.status === 'running' || job.status === 'queued') {
+            schedulePoll();
+          } else {
+            setUiRunning(false);
+          }
+        })
+        .catch(() => schedulePoll()); // retry on transient network error
+    }
+
+    function updateStatus(job) {
+      const dot   = document.getElementById('status-dot');
+      const stage = document.getElementById('stage-label');
+      const msg   = document.getElementById('progress-msg');
+
+      dot.className = `status-dot ${job.status}`;
+      stage.textContent = job.stage ? job.stage.toUpperCase() : job.status.toUpperCase();
+      msg.textContent   = job.progress_message || '';
+
+      // Append new diagnostic lines
+      const diag = document.getElementById('diagnostics');
+      const existing = diag.querySelectorAll('.diag-line').length;
+      (job.diagnostics || []).slice(existing).forEach(d => {
+        const line = document.createElement('div');
+        line.className = 'diag-line';
+        line.innerHTML = `<span class="stage-tag">[${d.stage}]</span>${escHtml(d.message)}`;
+        diag.appendChild(line);
+        diag.scrollTop = diag.scrollHeight;
+      });
+
+      if (job.status === 'succeeded') showResult(job);
+      if (job.status === 'failed')    showError(job.error || 'Unknown error');
+    }
+
+    function showResult(job) {
+      const result = job.result || {};
+      const source = job.source || {};
+      const grid = document.getElementById('result-grid');
+
+      const rightsClass = {
+        allowed: 'rights-allowed',
+        allowed_with_conditions: 'rights-conditions',
+        review_needed: 'rights-review',
+      }[source.rights_status] || 'rights-review';
+
+      grid.innerHTML = `
+        <span class="rk">Duration</span>   <span class="rv">${(result.duration_seconds||0).toFixed(2)}s</span>
+        <span class="rk">Format</span>     <span class="rv">${result.sample_rate||'—'}Hz / 16-bit / ${result.channels===2?'stereo':'mono'}</span>
+        <span class="rk">Confidence</span> <span class="rv">${Math.round((result.match_confidence||0)*100)}%</span>
+        <span class="rk">Source</span>     <span class="rv">${escHtml(source.provider||'—')}</span>
+        <span class="rk">Rights</span>     <span class="rv"><span class="rights-badge ${rightsClass}">${source.rights_status||'unknown'}</span></span>
+        ${source.conditions ? `<span class="rk">Note</span><span class="rv" style="font-size:0.82rem;color:var(--text-dim)">${escHtml(source.conditions)}</span>` : ''}
+      `;
+
+      document.getElementById('result-block').style.display = 'block';
+      document.getElementById('download-btn').style.display = 'block';
+    }
+
+    function downloadClip() {
+      if (!currentJobId) return;
+      window.location.href = `${serverUrl()}/jobs/${currentJobId}/download`;
+    }
+
+    /* UI helpers */
+    function showStatusCard() { document.getElementById('status-card').style.display = 'block'; }
+    function clearDiagnostics() { document.getElementById('diagnostics').innerHTML = ''; }
+    function hideResult() {
+      document.getElementById('result-block').style.display = 'none';
+      document.getElementById('download-btn').style.display = 'none';
+    }
+    function hideError() { document.getElementById('error-box').style.display = 'none'; }
+    function showError(msg) {
+      const box = document.getElementById('error-box');
+      box.textContent = msg;
+      box.style.display = 'block';
+    }
+    function setUiRunning(running) {
+      document.getElementById('extract-btn').disabled = running;
+      document.getElementById('extract-btn').textContent = running ? 'Extracting…' : 'Extract Clip';
+    }
+    function escHtml(s) {
+      return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+    }
+  </script>
+</body>
+</html>
