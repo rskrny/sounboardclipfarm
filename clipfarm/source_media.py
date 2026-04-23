@@ -90,22 +90,31 @@ class YouTubeSource:
     name = "youtube"
 
     def find(self, title: str, quote: Optional[str] = None) -> Optional[MediaResult]:
-        queries = []
+        # Pass 1: CC-licensed content only (cleanest rights posture)
         if quote:
-            # Targeted: search for the specific scene by quote text
-            queries.append(f'ytsearch1:{title} "{quote}" scene')
-            queries.append(f'ytsearch1:{title} "{quote}"')
-        # General fallback: official clips and trailers
-        queries.append(f"ytsearch1:{title} official clip")
-        queries.append(f"ytsearch1:{title} full movie")
-
-        for query in queries:
-            result = self._try_query(title, query)
+            result = self._try_query(title, f'ytsearch1:{title} "{quote}"', cc_only=True)
             if result:
                 return result
+        result = self._try_query(title, f"ytsearch1:{title}", cc_only=True)
+        if result:
+            return result
+
+        # Pass 2: targeted clip search (quote + scene), all results
+        if quote:
+            for q in (f'ytsearch1:{title} "{quote}" scene', f'ytsearch1:{title} "{quote}"'):
+                result = self._try_query(title, q)
+                if result:
+                    return result
+
+        # Pass 3: general fallback
+        for q in (f"ytsearch1:{title} official clip", f"ytsearch1:{title} full movie"):
+            result = self._try_query(title, q)
+            if result:
+                return result
+
         return None
 
-    def _try_query(self, title: str, query: str) -> Optional[MediaResult]:
+    def _try_query(self, title: str, query: str, cc_only: bool = False) -> Optional[MediaResult]:
         try:
             out_dir = tempfile.mkdtemp(prefix="clipfarm_yt_")
             out_template = os.path.join(out_dir, "%(id)s.%(ext)s")
@@ -117,8 +126,11 @@ class YouTubeSource:
                 "--audio-format", "mp3",
                 "--output", out_template,
                 "--quiet",
-                query,
             ]
+            if cc_only:
+                # Filter to Creative Commons licensed uploads only
+                cmd += ["--match-filter", "license^=creativecommons"]
+            cmd.append(query)
             result = subprocess.run(
                 cmd, capture_output=True, text=True, timeout=180
             )
