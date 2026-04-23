@@ -1,34 +1,93 @@
 """Fetch SRT subtitle files for a movie/show title.
 
-Tries OpenSubtitles API first. Falls back to faster-whisper transcription
-if no subtitle file is found and the media file is available locally.
+Tries the OpenSubtitles.com REST API first (v1). Falls back to
+faster-whisper local transcription if no subtitle file is found
+and the media file is available locally.
+
+OpenSubtitles env vars (all optional — system still works without them
+via the whisper fallback):
+  OPENSUBTITLES_API_KEY
+  OPENSUBTITLES_USER
+  OPENSUBTITLES_PASS
 """
 
 from __future__ import annotations
 import os
 import srt
+import requests
 from typing import Optional
-from .models import QuoteMatch
+
+
+_OPENSUBTITLES_BASE = "https://api.opensubtitles.com/api/v1"
+_APP_NAME = "soundboardclipfarm"
+
+
+def _os_headers(token: Optional[str] = None) -> dict:
+    headers = {
+        "Api-Key": os.environ.get("OPENSUBTITLES_API_KEY", ""),
+        "Content-Type": "application/json",
+        "User-Agent": _APP_NAME,
+    }
+    if token:
+        headers["Authorization"] = f"Bearer {token}"
+    return headers
+
+
+def _os_login() -> Optional[str]:
+    """Log in to OpenSubtitles and return the bearer token, or None."""
+    user = os.environ.get("OPENSUBTITLES_USER", "")
+    password = os.environ.get("OPENSUBTITLES_PASS", "")
+    api_key = os.environ.get("OPENSUBTITLES_API_KEY", "")
+    if not (user and password and api_key):
+        return None
+    try:
+        resp = requests.post(
+            f"{_OPENSUBTITLES_BASE}/login",
+            json={"username": user, "password": password},
+            headers=_os_headers(),
+            timeout=15,
+        )
+        resp.raise_for_status()
+        return resp.json().get("token")
+    except Exception:
+        return None
 
 
 def fetch_srt_opensubtitles(title: str, language: str = "en") -> Optional[str]:
     """Return raw SRT text for `title` from OpenSubtitles, or None on miss."""
+    token = _os_login()
+    if not token:
+        return None
     try:
-        from opensubtitlesapi import OpenSubtitles
-        api_key = os.environ.get("OPENSUBTITLES_API_KEY", "")
-        if not api_key:
-            return None
-        client = OpenSubtitles("soundboardclipfarm", api_key)
-        client.login(
-            os.environ.get("OPENSUBTITLES_USER", ""),
-            os.environ.get("OPENSUBTITLES_PASS", ""),
+        # Search for subtitles
+        resp = requests.get(
+            f"{_OPENSUBTITLES_BASE}/subtitles",
+            params={"query": title, "languages": language, "type": "movie"},
+            headers=_os_headers(token),
+            timeout=15,
         )
-        results = client.search(query=title, languages=[language])
-        if not results or not results.data:
+        resp.raise_for_status()
+        data = resp.json().get("data", [])
+        if not data:
             return None
-        subtitle_id = results.data[0].attributes.files[0].file_id
-        download = client.download(subtitle_id)
-        return download.content if download else None
+        file_id = data[0]["attributes"]["files"][0]["file_id"]
+
+        # Request download link
+        dl_resp = requests.post(
+            f"{_OPENSUBTITLES_BASE}/download",
+            json={"file_id": file_id},
+            headers=_os_headers(token),
+            timeout=15,
+        )
+        dl_resp.raise_for_status()
+        link = dl_resp.json().get("link")
+        if not link:
+            return None
+
+        # Download the SRT content
+        srt_resp = requests.get(link, timeout=30)
+        srt_resp.raise_for_status()
+        return srt_resp.text
     except Exception:
         return None
 
@@ -91,5 +150,5 @@ def get_transcript(
 
     raise RuntimeError(
         f"Could not obtain transcript for '{title}'. "
-        "Set OPENSUBTITLES_API_KEY or install faster-whisper."
+        "Set OPENSUBTITLES_API_KEY/USER/PASS env vars, or pass --srt / --file."
     )
