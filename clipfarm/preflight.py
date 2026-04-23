@@ -1,0 +1,125 @@
+"""Preflight request classifier — gate before sourcing begins.
+
+Returns a PreflightResult with a stable decision enum plus separate
+user-facing message and internal diagnostic reason.
+
+Decision states:
+  ready                — proceed to sourcing
+  needs_local_file     — auto-discovery unlikely to succeed; local file recommended
+  needs_episode_scope  — TV series without episode context; result would be ambiguous
+  unsupported_discovery — no viable sourcing path for this request shape
+
+Contract rules (per codex):
+- NOT a hardcoded studio/title blacklist
+- Risk classifier with explainable reasons, not brittle guesswork
+- When confidence is low, degrade to 'ask for local file', not false certainty
+- User message and diagnostic reason are kept separate
+- Optional fields (series, season, episode) must not break the movie flow
+"""
+
+from __future__ import annotations
+from dataclasses import dataclass
+from typing import Literal, Optional
+
+PreflightDecision = Literal[
+    "ready",                  # proceed to sourcing
+    "needs_local_file",       # local file strongly recommended; will warn but allow
+    "needs_episode_scope",    # TV series without episode context; ambiguous result
+    "unsupported_discovery",  # no viable sourcing path exists for this shape
+]
+
+
+@dataclass
+class PreflightResult:
+    decision: PreflightDecision
+    user_message: str         # product-language copy for the UI — no internals
+    diagnostic_reason: str    # internal explanation for job record / debugging
+    blocking: bool            # True = do not proceed; False = warn but allow
+
+
+def check(
+    title: str,
+    quote: str,
+    local_file: Optional[str] = None,
+    local_srt: Optional[str] = None,
+    media_type: Optional[str] = None,     # "movie" | "tv_series" | None (unknown)
+    series: Optional[str] = None,
+    season: Optional[int] = None,
+    episode: Optional[int] = None,
+) -> PreflightResult:
+    """Classify the request and return a preflight decision.
+
+    Does not make network calls. Works from request fields only.
+    """
+    has_local_file = bool(local_file and local_file.strip())
+    is_tv = media_type == "tv_series" or _looks_like_tv_series(title)
+    has_episode_scope = (season is not None) or (episode is not None) or has_local_file
+
+    # Rule 1: TV series with no episode scope and no local file
+    # → ambiguous; can't reliably locate a single quote across hundreds of episodes
+    if is_tv and not has_episode_scope:
+        return PreflightResult(
+            decision="needs_episode_scope",
+            user_message=(
+                f"'{title}' looks like a TV series. "
+                "TV quotes can appear across many episodes, so we need more context to find the right one. "
+                "Either upload the specific episode file, or specify a season and episode number."
+            ),
+            diagnostic_reason=(
+                f"media_type={'tv_series' if media_type == 'tv_series' else 'inferred_tv'}; "
+                f"no season/episode/local_file provided; quote '{quote}' is ambiguous across episodes"
+            ),
+            blocking=True,
+        )
+
+    # Rule 2: No local file provided (non-blocking — allow auto-discover with warning)
+    # Auto-discovery works for public domain and CC content; fails for mainstream commercial titles
+    if not has_local_file:
+        return PreflightResult(
+            decision="needs_local_file",
+            user_message=(
+                "No media file provided. Auto-discovery will try public domain and CC-licensed sources, "
+                "but will likely fail for mainstream commercial titles. "
+                "For reliable results, upload a video or audio file you have access to."
+            ),
+            diagnostic_reason=(
+                "local_file=None; auto-discovery path selected; "
+                "mainstream commercial titles (streaming-only) will fail sourcing"
+            ),
+            blocking=False,  # warn, do not block — user may want to try
+        )
+
+    # Rule 3: Local file provided — always ready
+    return PreflightResult(
+        decision="ready",
+        user_message="",
+        diagnostic_reason=f"local_file provided: {local_file}",
+        blocking=False,
+    )
+
+
+# ── Heuristics (not hardcoded titles — structural signals only) ──────────────
+
+_TV_KEYWORDS = {
+    "season", "episode", "series", "show", "pilot", "finale",
+    "s01", "s02", "s03", "s04", "s05", "s06", "s07", "s08",
+    "e01", "e02", "ep1", "ep2",
+}
+
+# Common TV show structural patterns: "Show Name S01E03", "The X: Season 2"
+import re
+_TV_PATTERNS = [
+    re.compile(r'\bs\d{1,2}e\d{1,2}\b', re.IGNORECASE),   # S01E03
+    re.compile(r'\bseason\s+\d+\b', re.IGNORECASE),        # Season 2
+    re.compile(r'\bepisode\s+\d+\b', re.IGNORECASE),       # Episode 5
+]
+
+
+def _looks_like_tv_series(title: str) -> bool:
+    """Structural heuristic — detects TV formatting signals, not title names."""
+    t = title.lower()
+    if any(kw in t.split() for kw in _TV_KEYWORDS):
+        return True
+    if any(p.search(title) for p in _TV_PATTERNS):
+        return True
+    return False
