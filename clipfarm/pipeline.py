@@ -6,7 +6,7 @@ from .models import ClipRequest, ClipResult
 from .fetch_transcript import get_transcript
 from .match_quote import find_quote
 from .source_media import resolve_media
-from .preflight import validate_request
+from .preflight import check
 
 ProgressCallback = Callable[[str, str], None]  # (stage, message)
 
@@ -38,7 +38,19 @@ def run(
 
     # Stage 0 — preflight
     _progress("preflight", f"Validating request for '{title}'…")
-    validate_request(title, media_type=media_type, local_file=local_file)
+    pf = check(
+        title=title,
+        quote=quote,
+        local_file=local_file,
+        local_srt=local_srt,
+        media_type=media_type,
+        season=season,
+        episode=episode,
+    )
+    if pf.blocking:
+        raise RuntimeError(f"Preflight check failed: {pf.user_message}")
+    if pf.user_message:
+        _progress("preflight", f"WARNING: {pf.user_message}")
 
     # Stage 1 — source media
     _progress("sourcing", f"Searching for '{title}'…")

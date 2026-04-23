@@ -356,10 +356,49 @@
       padding_before_ms: v.pb, padding_after_ms: v.pa,
     };
 
+    // Pre-submit preflight check — gives the user a clear message before wasting time
     setRunning(true);
-    showStatusCard();
-    clearStatus();
+    fetch(`${api()}/preflight`, {
+      method: 'POST', headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify(body),
+    })
+    .then(r => r.json())
+    .then(pf => {
+      if (pf.blocking) {
+        showStatusCard();
+        clearStatus();
+        showError('Cannot extract this clip', pf.user_message,
+          pf.decision === 'needs_episode_scope'
+            ? 'Specify a season and episode number, or upload the specific episode file.'
+            : 'Upload or provide a local media file to continue.'
+        );
+        setRunning(false);
+        return;
+      }
+      // Non-blocking warning: show it, then proceed
+      if (pf.decision !== 'ready') {
+        showStatusCard();
+        clearStatus();
+        const warn = document.createElement('div');
+        warn.className = 'dline';
+        warn.style.color = '#f5a623';
+        warn.innerHTML = `<span class="dt">[preflight]</span>${esc(pf.user_message)}`;
+        document.getElementById('diag').appendChild(warn);
+      } else {
+        showStatusCard();
+        clearStatus();
+      }
+      submitExtract(body);
+    })
+    .catch(() => {
+      // If /preflight is unreachable (old server), fall through to extract directly
+      showStatusCard();
+      clearStatus();
+      submitExtract(body);
+    });
+  }
 
+  function submitExtract(body) {
     fetch(`${api()}/extract`, {
       method: 'POST', headers: {'Content-Type': 'application/json'},
       body: JSON.stringify(body),
