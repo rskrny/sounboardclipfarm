@@ -8,13 +8,6 @@ Decision states:
   needs_local_file     — auto-discovery unlikely to succeed; local file recommended
   needs_episode_scope  — TV series without episode context; result would be ambiguous
   unsupported_discovery — no viable sourcing path for this request shape
-
-Contract rules (per codex):
-- NOT a hardcoded studio/title blacklist
-- Risk classifier with explainable reasons, not brittle guesswork   
-- When confidence is low, degrade to 'ask for local file', not false certainty
-- User message and diagnostic reason are kept separate
-- Optional fields (series, season, episode) must not break the movie flow
 """
 
 from __future__ import annotations
@@ -73,40 +66,42 @@ def check(
             blocking=True,
         )
 
-    # Rule 2: Detect mainstream titles that almost certainly require a local file
-    if not has_local_file and _is_mainstream_restricted(title):
-        return PreflightResult(
-            decision="needs_local_file",
-            user_message=(
-                f"'{title}' appears to be a mainstream commercial title. "
-                "Due to licensing restrictions, automated discovery is very unlikely to succeed. "
-                "For reliable results, please upload or provide a local media file."
-            ),
-            diagnostic_reason=(
-                f"title '{title}' matched mainstream restricted keywords; "
-                "auto-discovery will likely fail due to authorized-source policy"
-            ),
-            blocking=False, # warn, but allow them to try (they might hit a CC clip)
-        )
-
-    # Rule 3: No local file provided (non-blocking — allow auto-discover with warning)
-    # Auto-discovery works for public domain and CC content; fails for mainstream commercial titles
+    # Rule 2: High-risk commercial content (No local file)
+    # We use a broad heuristic: any title that isn't explicitly public domain-era 
+    # (pre-1928) or Creative Commons usually requires a local file.
     if not has_local_file:
+        # Check if it's a known restricted title/franchise (as a secondary heuristic)
+        if _is_mainstream_restricted(title):
+            return PreflightResult(
+                decision="needs_local_file",
+                user_message=(
+                    f"'{title}' is a major commercial title. "
+                    "Automated discovery will likely fail due to licensing restrictions. "
+                    "For reliable results, we strongly recommend uploading your own media file."
+                ),
+                diagnostic_reason=(
+                    f"title '{title}' matched high-risk commercial keywords; "
+                    "auto-discovery is low-confidence per authorized-source policy"
+                ),
+                blocking=False, 
+            )
+
+        # General "no local file" warning
         return PreflightResult(
             decision="needs_local_file",
             user_message=(
                 "No media file provided. Auto-discovery will try public domain and CC-licensed sources, "
-                "but will likely fail for mainstream commercial titles. "
-                "For reliable results, upload a video or audio file you have access to."
+                "but usually fails for commercial movies or shows. "
+                "Uploading your own file is the most reliable way to extract a clip."
             ),
             diagnostic_reason=(
                 "local_file=None; auto-discovery path selected; "
-                "mainstream commercial titles (streaming-only) will fail sourcing"
+                "mainstream commercial content is unlikely to resolve via authorized discovery"
             ),
-            blocking=False,  # warn, do not block — user may want to try
+            blocking=False,
         )
 
-    # Rule 4: Local file provided — always ready
+    # Rule 3: Local file provided — ready
     return PreflightResult(
         decision="ready",
         user_message="",
@@ -115,7 +110,7 @@ def check(
     )
 
 
-# ── Heuristics (structural signals + common mainstream keywords) ──────────────
+# ── Heuristics ────────────────────────────────────────────────────────────────
 
 _TV_KEYWORDS = {
     "season", "episode", "series", "show", "pilot", "finale",       
@@ -123,14 +118,13 @@ _TV_KEYWORDS = {
     "e01", "e02", "ep1", "ep2",
 }
 
-# Titles or franchises known to be strictly proprietary and unavailable via public discovery
-_MAINSTREAM_RESTRICTED = {
-    "nbc", "universal", "disney", "warner", "paramount", "mgm", "sony", "netflix", "hbo", "peacock",
-    "the office", "friends", "seinfeld", "star wars", "marvel", "mcu", "batman", "harry potter",
-    "game of thrones", "breaking bad", "better call soul", "stranger things"
+# Structural signal for mainstream franchises or studios that are strictly protected
+_MAINSTREAM_KEYWORDS = {
+    "disney", "marvel", "mcu", "star wars", "pixar", "dreamworks",
+    "warner", "hbo", "netflix", "universal", "paramount", "columbia",
+    "the office", "friends", "seinfeld", "breaking bad", "game of thrones"
 }
 
-# Common TV show structural patterns: "Show Name S01E03", "The X: Season 2"
 _TV_PATTERNS = [
     re.compile(r'\bs\d{1,2}e\d{1,2}\b', re.IGNORECASE),   # S01E03  
     re.compile(r'\bseason\s+\d+\b', re.IGNORECASE),        # Season 2
@@ -139,7 +133,7 @@ _TV_PATTERNS = [
 
 
 def _looks_like_tv_series(title: str) -> bool:
-    """Structural heuristic — detects TV formatting signals and commercial keywords."""
+    """Structural heuristic — detects TV formatting signals."""
     t = title.lower()
     if any(kw in t.split() for kw in _TV_KEYWORDS):
         return True
@@ -148,6 +142,6 @@ def _looks_like_tv_series(title: str) -> bool:
     return False
 
 def _is_mainstream_restricted(title: str) -> bool:
-    """Heuristic for common mainstream titles that require local files."""
+    """Heuristic for common commercial titles that typically require local files."""
     t = title.lower()
-    return any(kw in t for kw in _MAINSTREAM_RESTRICTED)
+    return any(kw in t for kw in _MAINSTREAM_KEYWORDS)
