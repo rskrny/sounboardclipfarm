@@ -1,4 +1,6 @@
 yt-dlp>=2024.1.0
+fastapi>=0.110.0
+uvicorn[standard]>=0.29.0
 internetarchive>=4.0.0
 rapidfuzz>=3.0.0
 srt>=3.5.0

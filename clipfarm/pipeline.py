@@ -1,11 +1,13 @@
 """Orchestrates all pipeline stages end-to-end."""
 
 from __future__ import annotations
-from typing import Optional
+from typing import Callable, Optional
 from .models import ClipRequest, ClipResult
 from .fetch_transcript import get_transcript
 from .match_quote import find_quote
 from .source_media import resolve_media
+
+ProgressCallback = Callable[[str, str], None]  # (stage, message)
 
 
 def run(
@@ -19,39 +21,42 @@ def run(
     padding_before_ms: int = 200,
     padding_after_ms: int = 200,
     language: str = "en",
+    on_progress: Optional[ProgressCallback] = None,
 ) -> ClipResult:
     """Full pipeline: title + quote → .wav clip.
 
-    Args:
-        title: Movie or show name.
-        quote: Line or phrase to locate.
-        output_path: Destination .wav file path.
-        local_file: Optional path to a media file the user already has.
-        local_srt: Optional path to a local .srt file.
-        sample_rate: Output sample rate in Hz.
-        channels: 1 = mono, 2 = stereo.
-        padding_before_ms: Milliseconds of audio before the matched line.
-        padding_after_ms: Milliseconds of audio after the matched line.
-        language: Subtitle language code for OpenSubtitles lookup.
-
-    Returns:
-        ClipResult with output path and metadata.
+    on_progress(stage, message) is called at the start of each stage so
+    callers (e.g. the service layer) can surface live progress to the UI.
     """
-    # Stage 1 — source media (pass quote for targeted YouTube clip search)
+    def _progress(stage: str, message: str) -> None:
+        if on_progress:
+            on_progress(stage, message)
+
+    # Stage 1 — source media
+    _progress("sourcing", f"Searching for '{title}'…")
     media = resolve_media(title, local_file=local_file, quote=quote)
+    _progress("sourcing", f"Found via {media.source}: {media.file_path}")
 
     # Stage 2 — fetch transcript
+    _progress("transcript", f"Fetching transcript ({language})…")
     subtitles, subtitle_source = get_transcript(
         title,
         media_path=media.file_path,
         local_srt=local_srt,
         language=language,
     )
+    _progress("transcript", f"Got {len(subtitles)} subtitle lines via {subtitle_source}")
 
     # Stage 3 — match quote
+    _progress("matching", f"Matching quote: '{quote}'")
     match = find_quote(quote, subtitles, subtitle_source)
+    _progress(
+        "matching",
+        f"Match at {match.start_time:.2f}s–{match.end_time:.2f}s "
+        f"(confidence {match.match_confidence:.0%}): '{match.matched_text}'",
+    )
 
-    # Stage 4 — build extraction request and hand off
+    # Stage 4 — build extraction request
     request = ClipRequest(
         media_path=media.file_path,
         start_time=match.start_time,
@@ -64,9 +69,13 @@ def run(
         sample_rate=sample_rate,
         channels=channels,
         bit_depth=16,
-        rights=media.rights,  # carry rights provenance through to output
+        rights=media.rights,
     )
 
-    # Stage 5 — extract clip (owned by codex / extract_clip.py)
-    from .extract_clip import extract  # imported here; codex implements this
-    return extract(request, output_path)
+    # Stage 5 — extract clip
+    _progress("extraction", f"Extracting {match.end_time - match.start_time:.2f}s clip…")
+    from .extract_clip import extract
+    result = extract(request, output_path)
+    _progress("extraction", f"Clip saved: {result.output_path} ({result.duration_seconds:.2f}s)")
+
+    return result
