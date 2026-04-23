@@ -269,7 +269,8 @@ def get_config() -> dict:
     """Returns supported providers, subtitle sources, and technical constraints."""
     return {
         "providers": {
-            "local_file": "User-provided local media file. Most reliable.",
+            "local_file": "User-provided local media file (upload via UI). Most reliable.",
+            "getyarn": "getyarn.io — indexed TV/movie quote clips. Best for mainstream titles (The Office, Breaking Bad, etc.).",
             "internet_archive": "Public domain catalog. Only pre-1928 era titles.",
             "youtube_cc": "YouTube, Creative Commons licensed (CC filter applied).",
             "youtube_promo": "YouTube, quote-targeted search — trailers and scene clips.",

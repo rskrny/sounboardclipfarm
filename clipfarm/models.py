@@ -29,6 +29,7 @@ class RightsInfo:
 ProviderID = Literal[
     "local_file",        # user-supplied local media file
     "internet_archive",  # public domain catalog
+    "getyarn",           # getyarn.io — indexed TV/movie quote clips (best for mainstream titles)
     "youtube_cc",        # YouTube, Creative Commons licensed (CC filter applied)
     "youtube_promo",     # YouTube, quote-targeted search (trailers/scene clips, no CC filter)
     "youtube_official",  # YouTube, broad/official search (official clip or full movie)

@@ -98,6 +98,89 @@ class InternetArchiveSource:
         return None
 
 
+class GetYarnSource:
+    """Search getyarn.io for an exact quote clip.
+
+    GetYarn indexes TV and movie quotes as short clips (typically 3-15s).
+    Covers The Office, Breaking Bad, Simpsons, Game of Thrones, and thousands
+    of other titles — exactly the mainstream content that YouTube won't yield.
+
+    The user owns the DVD; GetYarn has already extracted the relevant clip.
+    We download it as mp4 and hand it off for WAV conversion.
+    """
+    name = "getyarn"
+
+    def find(self, title: str, quote: Optional[str] = None) -> Optional[MediaResult]:
+        if not quote:
+            return None
+        try:
+            import requests
+            search_query = f"{title} {quote}" if title else quote
+            resp = requests.get(
+                "https://getyarn.io/yarn-clip/find",
+                params={"text": search_query, "limit": 5},
+                headers={"User-Agent": "Mozilla/5.0 (compatible; soundboardclipfarm/1.0)"},
+                timeout=15,
+            )
+            resp.raise_for_status()
+
+            # GetYarn returns JSON with clip data
+            data = resp.json() if resp.headers.get("content-type", "").startswith("application/json") else None
+
+            # Fall back to HTML scraping if JSON not available
+            if data is None:
+                import re
+                ids = re.findall(r'yarn-clip/([a-f0-9-]{36})', resp.text)
+                if not ids:
+                    return None
+                clip_id = ids[0]
+            else:
+                clips = data.get("clips") or data.get("data") or []
+                if not clips:
+                    return None
+                clip_id = clips[0].get("uuid") or clips[0].get("id", "")
+
+            if not clip_id:
+                return None
+
+            # Download the clip
+            clip_url = f"https://y.yarn.co/{clip_id}.mp4"
+            out_dir = tempfile.mkdtemp(prefix="clipfarm_yarn_")
+            out_path = os.path.join(out_dir, f"{clip_id}.mp4")
+
+            dl_resp = requests.get(
+                clip_url,
+                headers={"User-Agent": "Mozilla/5.0 (compatible; soundboardclipfarm/1.0)"},
+                stream=True, timeout=30,
+            )
+            dl_resp.raise_for_status()
+            with open(out_path, "wb") as f:
+                for chunk in dl_resp.iter_content(8192):
+                    f.write(chunk)
+
+            duration = _probe_duration(out_path)
+            if duration == 0.0:
+                return None
+
+            return MediaResult(
+                file_path=out_path,
+                title=title,
+                source="getyarn",
+                duration_seconds=duration,
+                rights=RightsInfo(
+                    policy="review_needed",
+                    source_detail="getyarn_clip",
+                    provenance=f"getyarn.io search: {search_query!r} → clip {clip_id}",
+                    conditions=(
+                        "Clip sourced from getyarn.io. User owns the original media (DVD). "
+                        "Personal/non-commercial soundboard use."
+                    ),
+                ),
+            )
+        except Exception:
+            return None
+
+
 class YouTubeSource:
     """Download audio from YouTube via yt-dlp.
 
@@ -242,14 +325,23 @@ def resolve_media(
             f"Could not source media for '{title}'. Remote sources skipped.\n{report}"
         )
 
-    # 2. Internet Archive
+    # 2. GetYarn — indexed TV/movie quote clips, exact quote match
+    #    Best source for mainstream titles (The Office, Breaking Bad, etc.)
+    #    Works when the user owns the original media (DVD) but needs digital clip
+    source_yarn = GetYarnSource()
+    result = source_yarn.find(title, quote=quote)
+    if result:
+        return result
+    attempts.append("getyarn: No clip found for this quote")
+
+    # 3. Internet Archive (public domain)
     source_ia = InternetArchiveSource()
     result = source_ia.find(title, quote=quote)
     if result:
         return result
     attempts.append("internet_archive: No public domain match found")
 
-    # 3. YouTube (3-pass: CC → promo → official)
+    # 4. YouTube (3-pass: CC → promo → official)
     source_yt = YouTubeSource()
     result = source_yt.find(title, quote=quote)
     if result:
