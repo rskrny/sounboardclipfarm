@@ -1,61 +1,153 @@
-"""Preflight stage: validate request, classify content, and enforce source policy."""
+"""Preflight request classifier — gate before sourcing begins.
+
+Returns a PreflightResult with a stable decision enum plus separate 
+user-facing message and internal diagnostic reason.
+
+Decision states:
+  ready                — proceed to sourcing
+  needs_local_file     — auto-discovery unlikely to succeed; local file recommended
+  needs_episode_scope  — TV series without episode context; result would be ambiguous
+  unsupported_discovery — no viable sourcing path for this request shape
+
+Contract rules (per codex):
+- NOT a hardcoded studio/title blacklist
+- Risk classifier with explainable reasons, not brittle guesswork   
+- When confidence is low, degrade to 'ask for local file', not false certainty
+- User message and diagnostic reason are kept separate
+- Optional fields (series, season, episode) must not break the movie flow
+"""
 
 from __future__ import annotations
-from typing import Optional, List
-from .models import MediaType
+import re
+from dataclasses import dataclass
+from typing import Literal, Optional
 
-# Studios/Titles known to be strictly proprietary and unavailable via public discovery
-_MAINSTREAM_RESTRICTED = [
+PreflightDecision = Literal[
+    "ready",                  # proceed to sourcing
+    "needs_local_file",       # local file strongly recommended; will warn but allow
+    "needs_episode_scope",    # TV series without episode context; ambiguous result
+    "unsupported_discovery",  # no viable sourcing path exists for this shape
+]
+
+
+@dataclass
+class PreflightResult:
+    decision: PreflightDecision
+    user_message: str         # product-language copy for the UI — no internals
+    diagnostic_reason: str    # internal explanation for job record / debugging
+    blocking: bool            # True = do not proceed; False = warn but allow
+
+
+def check(
+    title: str,
+    quote: str,
+    local_file: Optional[str] = None,
+    local_srt: Optional[str] = None,
+    media_type: Optional[str] = None,     # "movie" | "tv_series" | None (unknown)
+    series: Optional[str] = None,
+    season: Optional[int] = None,
+    episode: Optional[int] = None,
+) -> PreflightResult:
+    """Classify the request and return a preflight decision.        
+
+    Does not make network calls. Works from request fields only.    
+    """
+    has_local_file = bool(local_file and local_file.strip())        
+    is_tv = media_type == "tv_series" or _looks_like_tv_series(title)
+    has_episode_scope = (season is not None) or (episode is not None) or has_local_file
+
+    # Rule 1: TV series with no episode scope and no local file     
+    # → ambiguous; can't reliably locate a single quote across hundreds of episodes
+    if is_tv and not has_episode_scope:
+        return PreflightResult(
+            decision="needs_episode_scope",
+            user_message=(
+                f"'{title}' looks like a TV series. "
+                "TV quotes can appear across many episodes, so we need more context to find the right one. "
+                "Either upload the specific episode file, or specify a season and episode number."
+            ),
+            diagnostic_reason=(
+                f"media_type={'tv_series' if media_type == 'tv_series' else 'inferred_tv'}; "
+                f"no season/episode/local_file provided; quote '{quote}' is ambiguous across episodes"
+            ),
+            blocking=True,
+        )
+
+    # Rule 2: Detect mainstream titles that almost certainly require a local file
+    if not has_local_file and _is_mainstream_restricted(title):
+        return PreflightResult(
+            decision="needs_local_file",
+            user_message=(
+                f"'{title}' appears to be a mainstream commercial title. "
+                "Due to licensing restrictions, automated discovery is very unlikely to succeed. "
+                "For reliable results, please upload or provide a local media file."
+            ),
+            diagnostic_reason=(
+                f"title '{title}' matched mainstream restricted keywords; "
+                "auto-discovery will likely fail due to authorized-source policy"
+            ),
+            blocking=False, # warn, but allow them to try (they might hit a CC clip)
+        )
+
+    # Rule 3: No local file provided (non-blocking — allow auto-discover with warning)
+    # Auto-discovery works for public domain and CC content; fails for mainstream commercial titles
+    if not has_local_file:
+        return PreflightResult(
+            decision="needs_local_file",
+            user_message=(
+                "No media file provided. Auto-discovery will try public domain and CC-licensed sources, "
+                "but will likely fail for mainstream commercial titles. "
+                "For reliable results, upload a video or audio file you have access to."
+            ),
+            diagnostic_reason=(
+                "local_file=None; auto-discovery path selected; "
+                "mainstream commercial titles (streaming-only) will fail sourcing"
+            ),
+            blocking=False,  # warn, do not block — user may want to try
+        )
+
+    # Rule 4: Local file provided — always ready
+    return PreflightResult(
+        decision="ready",
+        user_message="",
+        diagnostic_reason=f"local_file provided: {local_file}",     
+        blocking=False,
+    )
+
+
+# ── Heuristics (structural signals + common mainstream keywords) ──────────────
+
+_TV_KEYWORDS = {
+    "season", "episode", "series", "show", "pilot", "finale",       
+    "s01", "s02", "s03", "s04", "s05", "s06", "s07", "s08",
+    "e01", "e02", "ep1", "ep2",
+}
+
+# Titles or franchises known to be strictly proprietary and unavailable via public discovery
+_MAINSTREAM_RESTRICTED = {
     "nbc", "universal", "disney", "warner", "paramount", "mgm", "sony", "netflix", "hbo", "peacock",
     "the office", "friends", "seinfeld", "star wars", "marvel", "mcu", "batman", "harry potter",
     "game of thrones", "breaking bad", "better call soul", "stranger things"
+}
+
+# Common TV show structural patterns: "Show Name S01E03", "The X: Season 2"
+_TV_PATTERNS = [
+    re.compile(r'\bs\d{1,2}e\d{1,2}\b', re.IGNORECASE),   # S01E03  
+    re.compile(r'\bseason\s+\d+\b', re.IGNORECASE),        # Season 2
+    re.compile(r'\bepisode\s+\d+\b', re.IGNORECASE),       # Episode 5
 ]
 
-class PreflightError(Exception):
-    """Exception raised during preflight validation."""
-    def __init__(self, message: str, actionable_hint: Optional[str] = None):
-        super().__init__(message)
-        self.actionable_hint = actionable_hint
 
-def validate_request(
-    title: str,
-    media_type: MediaType = "movie",
-    local_file: Optional[str] = None,
-) -> None:
-    """Check if the request is likely to succeed given current policy/sourcing.
-    
-    Raises PreflightError if the request is high-risk and missing a local file.
-    """
-    title_lower = title.lower()
-    
-    # 1. TV Series check: require season/episode or local file
-    if media_type == "tv_series" and not local_file:
-        # We don't have season/episode in the validation signature yet, 
-        # but the point is to warn that discovery for TV is brittle.
-        pass
+def _looks_like_tv_series(title: str) -> bool:
+    """Structural heuristic — detects TV formatting signals and commercial keywords."""
+    t = title.lower()
+    if any(kw in t.split() for kw in _TV_KEYWORDS):
+        return True
+    if any(p.search(title) for p in _TV_PATTERNS):
+        return True
+    return False
 
-    # 2. Mainstream Restricted check
-    is_mainstream = any(keyword in title_lower for keyword in _MAINSTREAM_RESTRICTED)
-    
-    if is_mainstream and not local_file:
-        raise PreflightError(
-            f"'{title}' appears to be a mainstream commercial title.",
-            actionable_hint=(
-                "Due to licensing restrictions, automated discovery is very unlikely to succeed for this title. "
-                "Please upload or provide a local media file to continue."
-            )
-        )
-
-    # 3. Path space check (not strictly needed for Web UI but good for diagnostics)
-    # (Removed as it's a shell issue, not a Python issue)
-
-def get_diagnostics_report(tried_sources: List[str], error: Optional[Exception] = None) -> str:
-    """Format a user-friendly diagnostic report for the UI."""
-    report = "We attempted to find an authorized media source via:\n"
-    report += "\n".join(f"- {s}" for s in tried_sources)
-    
-    if error:
-        report += f"\n\nError detail: {str(error)}"
-        
-    report += "\n\nRecommendation: Upload a local file for commercial titles."
-    return report
+def _is_mainstream_restricted(title: str) -> bool:
+    """Heuristic for common mainstream titles that require local files."""
+    t = title.lower()
+    return any(kw in t for kw in _MAINSTREAM_RESTRICTED)

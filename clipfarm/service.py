@@ -53,7 +53,9 @@ class ExtractRequest(BaseModel):
     padding_before_ms: int = 200
     padding_after_ms: int = 200
     language: str = "en"
-    media_type: str = "movie"
+    # Optional TV series scoping — does not break existing movie requests
+    media_type: Optional[str] = "movie"      # "movie" | "tv_series"
+    series: Optional[str] = None
     season: Optional[int] = None
     episode: Optional[int] = None
 
@@ -93,6 +95,32 @@ def _run_job(job_id: str, req: ExtractRequest) -> None:
         _append_diagnostic(job_id, stage, message)
 
     try:
+        # Preflight — classify request before any sourcing attempt
+        from .preflight import check as preflight_check
+        pf = preflight_check(
+            title=req.movie,
+            quote=req.quote,
+            local_file=req.local_file,
+            local_srt=req.local_srt,
+            media_type=req.media_type,
+            season=req.season,
+            episode=req.episode,
+        )
+        _append_diagnostic(job_id, "preflight", f"decision={pf.decision}: {pf.diagnostic_reason}")
+        if pf.blocking:
+            _update_job(
+                job_id,
+                status="failed",
+                stage="preflight",
+                progress_message=pf.user_message,
+                error=pf.user_message,
+                actionable_hint="Episode-level context or local file required for TV series.",
+            )
+            return
+        if pf.decision == "needs_local_file":
+            # Non-blocking warning — surface to UI but continue
+            _update_job(job_id, stage="preflight", progress_message=pf.user_message, actionable_hint=pf.user_message)
+            
         result = pipeline_run(
             title=req.movie,
             quote=req.quote,
@@ -138,6 +166,31 @@ def _run_job(job_id: str, req: ExtractRequest) -> None:
 
 
 # ── Endpoints ─────────────────────────────────────────────────────────────────
+
+@app.post("/preflight")
+def preflight(req: ExtractRequest) -> dict:
+    """Classify a request before committing to extraction.
+
+    Returns decision, user_message, and blocking flag.
+    The UI should call this on form submit and surface user_message
+    before starting the job when decision != 'ready'.
+    """
+    from .preflight import check as preflight_check
+    result = preflight_check(
+        title=req.movie,
+        quote=req.quote,
+        local_file=req.local_file,
+        local_srt=req.local_srt,
+        media_type=req.media_type,
+        season=req.season,
+        episode=req.episode,
+    )
+    return {
+        "decision": result.decision,
+        "user_message": result.user_message,
+        "blocking": result.blocking,
+    }
+
 
 @app.post("/extract", status_code=202)
 def extract(req: ExtractRequest) -> dict:
