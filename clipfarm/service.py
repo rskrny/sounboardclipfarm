@@ -19,10 +19,16 @@ import uuid
 from dataclasses import asdict
 from typing import Literal, Optional
 
-from fastapi import FastAPI, HTTPException
+import shutil
+import tempfile
+
+from fastapi import FastAPI, HTTPException, UploadFile, File
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
 from pydantic import BaseModel
+
+# Uploaded files are stored here for the duration of the session
+_UPLOAD_DIR = tempfile.mkdtemp(prefix="clipfarm_uploads_")
 
 from .pipeline import run as pipeline_run
 
@@ -166,6 +172,27 @@ def _run_job(job_id: str, req: ExtractRequest) -> None:
 
 
 # ── Endpoints ─────────────────────────────────────────────────────────────────
+
+@app.post("/upload")
+async def upload_file(file: UploadFile = File(...)) -> dict:
+    """Upload a media or subtitle file to the server for extraction.
+
+    Returns the server-side file_path to pass as local_file or local_srt
+    in subsequent /preflight and /extract requests.
+
+    Files are stored in a session temp directory. No size limit is enforced
+    here — the OS/disk is the limit. Large movie files may take time to upload
+    over localhost, which is still much faster than any network transfer.
+    """
+    safe_name = os.path.basename(file.filename or "upload")
+    dest = os.path.join(_UPLOAD_DIR, f"{uuid.uuid4().hex}_{safe_name}")
+    try:
+        with open(dest, "wb") as out:
+            shutil.copyfileobj(file.file, out)
+    finally:
+        await file.close()
+    return {"file_path": dest, "filename": safe_name, "size_bytes": os.path.getsize(dest)}
+
 
 @app.post("/preflight")
 def preflight(req: ExtractRequest) -> dict:

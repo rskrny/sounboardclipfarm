@@ -309,9 +309,31 @@
   let mode = 'file';
   let currentJobId = null;
   let pollTimer = null;
-  let chosenFilePath = null;
-  let chosenSrtPath = null;
+  let serverFilePath = null;   // path on server after upload
+  let serverSrtPath  = null;   // srt path on server after upload
   const api = () => document.getElementById('server-url').value.replace(/\/$/, '');
+
+  async function uploadToServer(file, statusElemId, pathStore) {
+    const el = document.getElementById(statusElemId);
+    el.textContent = `⏳ Uploading ${file.name}…`;
+    el.style.display = 'block';
+    el.style.color = 'var(--yellow)';
+    const fd = new FormData();
+    fd.append('file', file);
+    try {
+      const r = await fetch(`${api()}/upload`, { method: 'POST', body: fd });
+      if (!r.ok) throw new Error(`HTTP ${r.status}`);
+      const data = await r.json();
+      pathStore(data.file_path);
+      const kb = (data.size_bytes / 1024).toFixed(0);
+      el.textContent = `✓ ${data.filename} (${kb} KB) — ready`;
+      el.style.color = 'var(--green)';
+    } catch (e) {
+      el.textContent = `✗ Upload failed: ${e.message}`;
+      el.style.color = 'var(--red)';
+      pathStore(null);
+    }
+  }
 
   function setMode(m) {
     mode = m;
@@ -328,41 +350,26 @@
 
   function handleFileChosen(input) {
     if (!input.files.length) return;
-    const f = input.files[0];
-    chosenFilePath = f.name; // server receives path string — user must ensure serve.py can see it
-    document.getElementById('file-chosen').textContent = '✓ ' + f.name;
-    document.getElementById('file-chosen').style.display = 'block';
-    // Store actual file object for potential future upload support
-    window._chosenFile = f;
+    uploadToServer(input.files[0], 'file-chosen', p => { serverFilePath = p; });
   }
 
   function handleFileDrop(e) {
     e.preventDefault();
     document.getElementById('file-drop').classList.remove('dragover');
-    const f = e.dataTransfer.files[0];
-    if (!f) return;
-    chosenFilePath = f.name;
-    document.getElementById('file-chosen').textContent = '✓ ' + f.name;
-    document.getElementById('file-chosen').style.display = 'block';
-    window._chosenFile = f;
+    if (!e.dataTransfer.files[0]) return;
+    uploadToServer(e.dataTransfer.files[0], 'file-chosen', p => { serverFilePath = p; });
   }
 
   function handleSrtChosen(input) {
     if (!input.files.length) return;
-    const f = input.files[0];
-    chosenSrtPath = f.name;
-    document.getElementById('srt-chosen').textContent = '✓ ' + f.name;
-    document.getElementById('srt-chosen').style.display = 'block';
+    uploadToServer(input.files[0], 'srt-chosen', p => { serverSrtPath = p; });
   }
 
   function handleSrtDrop(e) {
     e.preventDefault();
     document.getElementById('srt-drop').classList.remove('dragover');
-    const f = e.dataTransfer.files[0];
-    if (!f) return;
-    chosenSrtPath = f.name;
-    document.getElementById('srt-chosen').textContent = '✓ ' + f.name;
-    document.getElementById('srt-chosen').style.display = 'block';
+    if (!e.dataTransfer.files[0]) return;
+    uploadToServer(e.dataTransfer.files[0], 'srt-chosen', p => { serverSrtPath = p; });
   }
 
   function getFormValues() {
@@ -374,8 +381,8 @@
         episode:parseInt(document.getElementById('f-episode').value) || null,
         quote:  document.getElementById('f-quote').value.trim(),
         output: document.getElementById('f-output').value.trim() || 'clip.wav',
-        file:   chosenFilePath,
-        srt:    chosenSrtPath,
+        file:   serverFilePath,
+        srt:    serverSrtPath,
         sr:     parseInt(document.getElementById('f-sr').value),
         ch:     parseInt(document.getElementById('f-ch').value),
         pb:     parseInt(document.getElementById('f-pb').value),
@@ -398,7 +405,7 @@
     const v = getFormValues();
     if (!v.movie || !v.quote) { alert('Please enter a title and a quote.'); return; }
     if (mode === 'file' && !v.file) {
-      alert('Please choose your media file first.\n\nDrop a video or audio file into the file box above.');
+      alert('Please wait for your media file to finish uploading, or drop a video/audio file into the file box above.');
       return;
     }
 
