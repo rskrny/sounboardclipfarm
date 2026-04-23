@@ -236,13 +236,28 @@ def resolve_media(
     if os.environ.get("CLIPFARM_SKIP_REMOTE") == "1":
         report = "\n".join(f"- {a}" for a in attempts)
         raise RuntimeError(
-            f"Could not source media for '{title}'. Remote sources skipped per env var.\n"
-            f"Attempts:\n{report}"
+            f"Could not source media for '{title}'. Remote sources skipped.\n{report}"
         )
 
     # 2. Internet Archive
     source_ia = InternetArchiveSource()
-...
+    result = source_ia.find(title, quote=quote)
+    if result:
+        return result
+    attempts.append("internet_archive: No public domain match found")
+
+    # 3. YouTube (3-pass: CC → promo → official)
+    source_yt = YouTubeSource()
+    result = source_yt.find(title, quote=quote)
+    if result:
+        return result
+    attempts.append("youtube: No usable result from any search pass")
+
+    report = "; ".join(attempts)
+    raise RuntimeError(
+        f"Could not automatically source media for '{title}' ({report}). "
+        f"Upload your own video or audio file to extract from it directly."
+    )
 
 
 def _probe_duration(path: str) -> float:
