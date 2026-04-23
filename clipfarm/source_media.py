@@ -100,42 +100,50 @@ class InternetArchiveSource:
 class YouTubeSource:
     """Download audio from YouTube via yt-dlp.
 
-    Pass 1: CC-licensed content only (cleanest rights posture).
-    Pass 2: Targeted clip search by quote (published scenes, no license gate).
-    Pass 3: General fallback (official clip, full movie).
+    Pass 1 (youtube_cc):     CC-licensed content — cleanest rights posture.
+    Pass 2 (youtube_promo):  Quote-targeted search — trailers/scene clips, no CC gate.
+    Pass 3 (youtube_official):General fallback — broad search, last resort.
 
-    Policy is determined by what yt-dlp metadata returns for the found video.
-    CC videos → allowed or allowed_with_conditions.
-    No-license videos → review_needed (never silently promoted to allowed).
+    Each pass yields a distinct ProviderID so the UI can show icons, copy,
+    and disclosure appropriate to the source type.
     """
-    name = "youtube"
+    name = "youtube_official"  # default; overridden per pass
 
     def find(self, title: str, quote: Optional[str] = None) -> Optional[MediaResult]:
-        # Pass 1: CC-licensed content — cleanest rights posture
+        # Pass 1: youtube_cc — CC-licensed content
         if quote:
-            result = self._try_query(title, f'ytsearch1:{title} "{quote}"', cc_only=True)
+            result = self._try_query(
+                title, f'ytsearch1:{title} "{quote}"',
+                cc_only=True, provider_id="youtube_cc",
+            )
             if result:
                 return result
-        result = self._try_query(title, f"ytsearch1:{title}", cc_only=True)
+        result = self._try_query(
+            title, f"ytsearch1:{title}",
+            cc_only=True, provider_id="youtube_cc",
+        )
         if result:
             return result
 
-        # Pass 2: targeted clip search, all results
+        # Pass 2: youtube_promo — quote-targeted scene/clip search
         if quote:
             for q in (f'ytsearch1:{title} "{quote}" scene', f'ytsearch1:{title} "{quote}"'):
-                result = self._try_query(title, q)
+                result = self._try_query(title, q, provider_id="youtube_promo")
                 if result:
                     return result
 
-        # Pass 3: general fallback
+        # Pass 3: youtube_official — broad fallback
         for q in (f"ytsearch1:{title} official clip", f"ytsearch1:{title} full movie"):
-            result = self._try_query(title, q)
+            result = self._try_query(title, q, provider_id="youtube_official")
             if result:
                 return result
 
         return None
 
-    def _try_query(self, title: str, query: str, cc_only: bool = False) -> Optional[MediaResult]:
+    def _try_query(
+        self, title: str, query: str,
+        cc_only: bool = False, provider_id: str = "youtube_official",
+    ) -> Optional[MediaResult]:
         try:
             out_dir = tempfile.mkdtemp(prefix="clipfarm_yt_")
             out_template = os.path.join(out_dir, "%(id)s.%(ext)s")
@@ -166,17 +174,15 @@ class YouTubeSource:
             if duration == 0.0:
                 return None
 
-            # Classify by search pass: CC filter = allowed_with_conditions; no filter = review_needed
+            # Rights classification by search pass (provider_id is set by the caller)
             if cc_only:
-                source_id = "youtube_cc"
                 rights = RightsInfo(
                     policy="allowed_with_conditions",
                     source_detail="creative_commons_youtube",
                     provenance=f"yt-dlp CC-filtered search: {query}",
                     conditions="Attribution required per CC license terms.",
                 )
-            elif "official" in query.lower() or "scene" in query.lower():
-                source_id = "youtube_promo"
+            elif provider_id == "youtube_promo":
                 rights = RightsInfo(
                     policy="review_needed",
                     source_detail="official_promo_or_clip",
@@ -184,7 +190,6 @@ class YouTubeSource:
                     conditions="Likely official promotional material. Review before commercial use.",
                 )
             else:
-                source_id = "youtube_official"
                 rights = RightsInfo(
                     policy="review_needed",
                     source_detail="no_license_verified",
@@ -195,7 +200,7 @@ class YouTubeSource:
             return MediaResult(
                 file_path=local_path,
                 title=title,
-                source=source_id,
+                source=provider_id,  # type: ignore[arg-type]
                 duration_seconds=duration,
                 rights=rights,
             )

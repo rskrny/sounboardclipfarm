@@ -182,7 +182,9 @@ def get_config() -> dict:
         "providers": {
             "local_file": "User-provided local media file. Most reliable.",
             "internet_archive": "Public domain catalog. Only pre-1928 era titles.",
-            "youtube": "yt-dlp YouTube search. CC-licensed content preferred.",
+            "youtube_cc": "YouTube, Creative Commons licensed (CC filter applied).",
+            "youtube_promo": "YouTube, quote-targeted search — trailers and scene clips.",
+            "youtube_official": "YouTube, broad/official search — official clip or full movie.",
         },
         "subtitle_sources": {
             "local_srt": "User-provided .srt file.",

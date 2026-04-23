@@ -26,12 +26,21 @@ class RightsInfo:
     conditions: str = ""  # human-readable conditions that apply, if any
 
 
+ProviderID = Literal[
+    "local_file",        # user-supplied local media file
+    "internet_archive",  # public domain catalog
+    "youtube_cc",        # YouTube, Creative Commons licensed (CC filter applied)
+    "youtube_promo",     # YouTube, quote-targeted search (trailers/scene clips, no CC filter)
+    "youtube_official",  # YouTube, broad/official search (official clip or full movie)
+]
+
+
 @dataclass
 class MediaResult:
     """Output from a MediaSource — a resolved local audio/video path."""
     file_path: str
     title: str
-    source: Literal["local_file", "internet_archive", "youtube_official", "youtube_promo", "youtube_cc"]
+    source: ProviderID
     duration_seconds: float
     rights: Optional[RightsInfo] = None
 
@@ -62,7 +71,7 @@ class ClipRequest:
     channels: int = 1
     bit_depth: int = 16
     rights: Optional[RightsInfo] = None   # carried from MediaResult
-    provider: str = "unknown"             # MediaResult.source identity (not a path)
+    provider: str = "unknown"             # ProviderID — never a file path
 
 
 @dataclass
@@ -73,8 +82,8 @@ class ClipResult:
     sample_rate: int
     channels: int
     bit_depth: int
-    source_media: str                     # temp/local file path — internal detail
-    provider: str                         # source identity: local_file | internet_archive | youtube
+    source_media: str                     # temp/local file path — internal, not surfaced in API
+    provider: str                         # ProviderID: local_file | internet_archive | youtube_cc | youtube_promo | youtube_official
     quote_text: str
     match_confidence: float
     rights: Optional[RightsInfo] = None  # surface to UI/API — never suppress
