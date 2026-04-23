@@ -8,7 +8,7 @@ Endpoints:
 
 Job record shape (per codex contract):
   job_id, status, stage, progress_message, result, error, diagnostics,
-  rights_status, provenance, source_detail
+  source { provider, source_detail, provenance_evidence, rights_status, conditions }
 """
 
 from __future__ import annotations
@@ -65,10 +65,8 @@ def _new_job(job_id: str, req: ExtractRequest) -> dict:
         "progress_message": "Job queued.",
         "result": None,               # ClipResult as dict when succeeded
         "error": None,                # error message string when failed
-        "diagnostics": [],            # list of (stage, message) tuples as dicts
-        "rights_status": None,        # policy from RightsInfo
-        "provenance": None,
-        "source_detail": None,
+        "diagnostics": [],            # list of {"stage", "message"} entries
+        "source": None,               # populated on success: provider, rights, provenance
         "request": req.model_dump(),
     }
 
@@ -106,15 +104,22 @@ def _run_job(job_id: str, req: ExtractRequest) -> None:
         )
         result_dict = asdict(result)
         rights = result_dict.pop("rights", None)
+        source_block = None
+        if rights:
+            source_block = {
+                "provider": result_dict.get("source_media", "unknown"),
+                "source_detail": rights.get("source_detail"),
+                "provenance_evidence": rights.get("provenance"),
+                "rights_status": rights.get("policy"),
+                "conditions": rights.get("conditions") or "",
+            }
         _update_job(
             job_id,
             status="succeeded",
             stage="done",
             progress_message="Clip extracted successfully.",
             result=result_dict,
-            rights_status=rights["policy"] if rights else None,
-            provenance=rights["provenance"] if rights else None,
-            source_detail=rights["source_detail"] if rights else None,
+            source=source_block,
         )
     except Exception as exc:
         _update_job(
