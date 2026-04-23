@@ -37,8 +37,8 @@ def run(
     Returns:
         ClipResult with output path and metadata.
     """
-    # Stage 1 — source media
-    media = resolve_media(title, local_file=local_file)
+    # Stage 1 — source media (pass quote for targeted YouTube clip search)
+    media = resolve_media(title, local_file=local_file, quote=quote)
 
     # Stage 2 — fetch transcript
     subtitles, subtitle_source = get_transcript(

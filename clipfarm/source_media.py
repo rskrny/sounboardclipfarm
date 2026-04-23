@@ -3,10 +3,12 @@
 Sources tried in order:
 1. Local file path (user-provided — most reliable).
 2. Internet Archive (public-domain films only).
-3. YouTube search via yt-dlp (audio-only download).
+3. YouTube: targeted clip search (title + quote) — finds published official scenes.
+4. YouTube: broad search (title + "official clip") — fallback for general scenes.
 
-For mainstream copyrighted titles, only sources 1 and 3 are likely to
-succeed. Use --file to supply a copy you already have for guaranteed results.
+For mainstream copyrighted titles, sources 3 and 4 search for published clips
+rather than full movies, which are more likely to be officially available.
+Pass --file with a local copy for guaranteed results on any title.
 """
 
 from __future__ import annotations
@@ -19,7 +21,7 @@ from .models import MediaResult
 
 class MediaSource(Protocol):
     name: str
-    def find(self, title: str) -> Optional[MediaResult]: ...
+    def find(self, title: str, quote: Optional[str] = None) -> Optional[MediaResult]: ...
 
 
 class LocalFileSource:
@@ -29,7 +31,7 @@ class LocalFileSource:
     def __init__(self, file_path: str) -> None:
         self._path = file_path
 
-    def find(self, title: str) -> Optional[MediaResult]:
+    def find(self, title: str, quote: Optional[str] = None) -> Optional[MediaResult]:
         if not os.path.isfile(self._path):
             return None
         return MediaResult(
@@ -48,7 +50,7 @@ class InternetArchiveSource:
     """
     name = "internet_archive"
 
-    def find(self, title: str) -> Optional[MediaResult]:
+    def find(self, title: str, quote: Optional[str] = None) -> Optional[MediaResult]:
         try:
             import internetarchive as ia
             results = ia.search_items(
@@ -77,14 +79,33 @@ class InternetArchiveSource:
 
 
 class YouTubeSource:
-    """Download audio-only from YouTube via yt-dlp.
+    """Download audio from YouTube via yt-dlp.
 
-    Searches for the title and downloads the best audio match.
-    Use this with titles you have a legitimate right to access.
+    When a quote is provided, searches for the specific scene (title + quote)
+    first — this targets published official clips and meme/highlight videos
+    that are far more likely to be accessible than a full movie upload.
+
+    Falls back to a general official-clip search if the targeted search misses.
     """
     name = "youtube"
 
-    def find(self, title: str) -> Optional[MediaResult]:
+    def find(self, title: str, quote: Optional[str] = None) -> Optional[MediaResult]:
+        queries = []
+        if quote:
+            # Targeted: search for the specific scene by quote text
+            queries.append(f'ytsearch1:{title} "{quote}" scene')
+            queries.append(f'ytsearch1:{title} "{quote}"')
+        # General fallback: official clips and trailers
+        queries.append(f"ytsearch1:{title} official clip")
+        queries.append(f"ytsearch1:{title} full movie")
+
+        for query in queries:
+            result = self._try_query(title, query)
+            if result:
+                return result
+        return None
+
+    def _try_query(self, title: str, query: str) -> Optional[MediaResult]:
         try:
             out_dir = tempfile.mkdtemp(prefix="clipfarm_yt_")
             out_template = os.path.join(out_dir, "%(id)s.%(ext)s")
@@ -96,7 +117,7 @@ class YouTubeSource:
                 "--audio-format", "mp3",
                 "--output", out_template,
                 "--quiet",
-                f"ytsearch1:{title} full movie",
+                query,
             ]
             result = subprocess.run(
                 cmd, capture_output=True, text=True, timeout=180
@@ -127,13 +148,14 @@ class YouTubeSource:
 def resolve_media(
     title: str,
     local_file: Optional[str] = None,
+    quote: Optional[str] = None,
 ) -> MediaResult:
     """Try each source in priority order and return the first hit.
 
     Raises RuntimeError with a detailed message listing what was tried
-    if no source succeeds. The message includes the --file suggestion.
+    if no source succeeds. Pass quote to enable targeted YouTube clip search.
     """
-    sources: list[MediaSource] = []
+    sources: list = []
     if local_file:
         sources.append(LocalFileSource(local_file))
     sources.append(InternetArchiveSource())
@@ -142,7 +164,7 @@ def resolve_media(
     tried: list[str] = []
     for source in sources:
         tried.append(source.name)
-        result = source.find(title)
+        result = source.find(title, quote=quote)
         if result:
             return result
 
@@ -152,7 +174,7 @@ def resolve_media(
         f"  Sources tried: {tried_str}\n"
         f"  For mainstream films, use --file to supply a local copy:\n"
         f"    python cli.py --movie \"{title}\" --quote \"...\" "
-        f"--output out.wav --file /path/to/{title.lower().replace(' ', '_')}.mp4"
+        f"--output out.wav --file \"{title.lower().replace(' ', '_')}.mp4\""
     )
 
 
