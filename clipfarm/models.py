@@ -31,7 +31,7 @@ class MediaResult:
     """Output from a MediaSource — a resolved local audio/video path."""
     file_path: str
     title: str
-    source: Literal["local_file", "internet_archive", "youtube"]
+    source: Literal["local_file", "internet_archive", "youtube_official", "youtube_promo", "youtube_cc"]
     duration_seconds: float
     rights: Optional[RightsInfo] = None
 

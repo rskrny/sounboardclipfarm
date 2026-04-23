@@ -1,0 +1,54 @@
+# Context Engineering Retrieval System Configuration
+#
+# These are the defaults. Override any value here.
+# Rebuild the index after changing: python scripts/reindex.py
+
+# Directories to index (relative to project root)
+index_dirs:
+  - prompts/context
+  - prompts/domains
+
+# File patterns (supports markdown, code, structured data, HTML, PDF, DOCX)
+include_patterns:
+  - "*.md"
+  - "*.txt"
+  - "*.py"
+  - "*.js"
+  - "*.ts"
+  - "*.json"
+  - "*.yaml"
+  - "*.yml"
+  - "*.html"
+  - "*.csv"
+  - "*.pdf"
+  - "*.docx"
+
+exclude_patterns:
+  - INDEX.md
+  - TEMPLATE.md
+  - "archive/*"
+  - "__pycache__/*"
+  - "node_modules/*"
+  - "*.min.js"
+  - "*.min.css"
+
+# Chunking
+chunk_max_tokens: 512
+chunk_overlap_tokens: 64
+split_on_headers: true
+min_chunk_length: 50
+
+# BM25 tuning
+bm25_k1: 1.5
+bm25_b: 0.75
+
+# Semantic search
+embedding_model: all-MiniLM-L6-v2
+embedding_dim: 384
+use_semantic: true
+
+# Search defaults
+default_top_k: 10
+bm25_weight: 0.4
+semantic_weight: 0.6
+rerank_top_n: 20

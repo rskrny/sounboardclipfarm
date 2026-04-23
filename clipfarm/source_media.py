@@ -168,13 +168,23 @@ class YouTubeSource:
 
             # Classify by search pass: CC filter = allowed_with_conditions; no filter = review_needed
             if cc_only:
+                source_id = "youtube_cc"
                 rights = RightsInfo(
                     policy="allowed_with_conditions",
                     source_detail="creative_commons_youtube",
                     provenance=f"yt-dlp CC-filtered search: {query}",
                     conditions="Attribution required per CC license terms.",
                 )
+            elif "official" in query.lower() or "scene" in query.lower():
+                source_id = "youtube_promo"
+                rights = RightsInfo(
+                    policy="review_needed",
+                    source_detail="official_promo_or_clip",
+                    provenance=f"yt-dlp targeted search: {query}",
+                    conditions="Likely official promotional material. Review before commercial use.",
+                )
             else:
+                source_id = "youtube_official"
                 rights = RightsInfo(
                     policy="review_needed",
                     source_detail="no_license_verified",
@@ -185,7 +195,7 @@ class YouTubeSource:
             return MediaResult(
                 file_path=local_path,
                 title=title,
-                source="youtube",
+                source=source_id,
                 duration_seconds=duration,
                 rights=rights,
             )

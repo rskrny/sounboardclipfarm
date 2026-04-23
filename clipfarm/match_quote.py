@@ -5,6 +5,7 @@ the quote spans a line boundary.
 """
 
 from __future__ import annotations
+import re
 import srt
 from rapidfuzz import fuzz, process
 from typing import Optional
@@ -13,6 +14,13 @@ from .models import QuoteMatch
 
 _MIN_CONFIDENCE = 0.60   # reject matches below this threshold
 _MAX_CLIP_SECONDS = 14.5  # hard cap; leaves headroom under the 15s limit
+
+
+def _normalize_text(text: str) -> str:
+    """Lowercase and strip punctuation for stable matching."""
+    text = text.lower()
+    text = re.sub(r'[^\w\s]', '', text)
+    return text.strip()
 
 
 def _srt_line_text(sub: srt.Subtitle) -> str:
@@ -45,13 +53,15 @@ def find_quote(
     """
     candidates: list[tuple[float, float, str, float]] = []  # (start, end, text, score)
 
+    norm_quote = _normalize_text(quote)
     lines = [_srt_line_text(s) for s in subtitles]
+    norm_lines = [_normalize_text(l) for l in lines]
 
     # Single-line pass
     results = process.extract(
-        quote, lines, scorer=fuzz.token_set_ratio, limit=10
+        norm_quote, norm_lines, scorer=fuzz.token_set_ratio, limit=10
     )
-    for matched_text, score, idx in results:
+    for matched_norm_text, score, idx in results:
         norm_score = score / 100.0
         if norm_score < _MIN_CONFIDENCE:
             continue
@@ -59,7 +69,8 @@ def find_quote(
         end_sec = subtitles[idx].end.total_seconds()
         duration = end_sec - start_sec
         if duration <= _MAX_CLIP_SECONDS:
-            candidates.append((start_sec, end_sec, matched_text, norm_score))
+            # We keep the original (not normalized) text for the result
+            candidates.append((start_sec, end_sec, lines[idx], norm_score))
 
     # Multi-line sliding window pass
     for size in range(2, window_size + 1):
@@ -67,7 +78,8 @@ def find_quote(
             start_sec, end_sec, merged = _merge_window(subtitles, i, i + size - 1)
             if (end_sec - start_sec) > _MAX_CLIP_SECONDS:
                 continue
-            score = fuzz.token_set_ratio(quote, merged) / 100.0
+            norm_merged = _normalize_text(merged)
+            score = fuzz.token_sort_ratio(norm_quote, norm_merged) / 100.0
             if score >= _MIN_CONFIDENCE:
                 candidates.append((start_sec, end_sec, merged, score))
 

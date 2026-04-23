@@ -1,0 +1,10 @@
+# Core (required)
+rank-bm25>=0.2.2
+
+# Semantic search (optional - install for full hybrid mode)
+# Skip these for BM25-only "lite mode"
+sentence-transformers>=2.2.0
+numpy>=1.24.0
+
+# Config (optional)
+pyyaml>=6.0
