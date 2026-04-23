@@ -134,7 +134,8 @@
   <!-- Mode tabs -->
   <div class="mode-tabs">
     <button class="tab active" id="tab-file" onclick="setMode('file')">📁 I have a file</button>
-    <button class="tab" id="tab-discover" onclick="setMode('discover')">🔍 Auto-discover</button>
+    <button class="tab" id="tab-discover" onclick="setMode('discover')">🔍 I know the title</button>
+    <button class="tab" id="tab-quote" onclick="setMode('quote')">💬 Just a quote</button>
   </div>
 
   <!-- Mode: I have a file (primary, reliable) -->
@@ -281,6 +282,25 @@
     </div>
   </div>
 
+  <!-- Mode: Just a quote (no title needed) -->
+  <div id="mode-quote" style="display:none">
+    <div class="warn-banner" style="background:#0d1a2e;border-color:#1e3a5f;color:#93c5fd">
+      <strong>💬 Quote-only search</strong>
+      Just type the quote. The tool will search GetYarn and subtitle databases to identify
+      which movie or show it's from, then extract the clip automatically.
+      Works best for well-known quotes from popular titles.
+    </div>
+    <div class="field">
+      <label>Quote or phrase</label>
+      <input id="q-quote" type="text" placeholder="e.g. That's what she said" autocomplete="off" />
+      <div class="hint">Type it as closely as you remember. Partial phrases work too.</div>
+    </div>
+    <div class="field">
+      <label>Output filename</label>
+      <input id="q-output" type="text" value="clip.wav" />
+    </div>
+  </div>
+
   <button class="primary" id="extract-btn" onclick="startExtraction()" style="margin-top:8px">
     Extract Clip
   </button>
@@ -339,8 +359,10 @@
     mode = m;
     document.getElementById('mode-file').style.display     = m === 'file'     ? 'block' : 'none';
     document.getElementById('mode-discover').style.display = m === 'discover' ? 'block' : 'none';
+    document.getElementById('mode-quote').style.display    = m === 'quote'    ? 'block' : 'none';
     document.getElementById('tab-file').classList.toggle('active',     m === 'file');
     document.getElementById('tab-discover').classList.toggle('active', m === 'discover');
+    document.getElementById('tab-quote').classList.toggle('active',    m === 'quote');
   }
 
   function toggleTvFields(m) {
@@ -388,6 +410,13 @@
         pb:     parseInt(document.getElementById('f-pb').value),
         pa:     parseInt(document.getElementById('f-pa').value),
       };
+    } else if (mode === 'quote') {
+      return {
+        type: 'movie', movie: '', season: null, episode: null,
+        quote:  document.getElementById('q-quote').value.trim(),
+        output: document.getElementById('q-output').value.trim() || 'clip.wav',
+        file: null, srt: null, sr: 44100, ch: 1, pb: 0, pa: 0,
+      };
     } else {
       return {
         type:   document.getElementById('d-type').value,
@@ -403,7 +432,8 @@
 
   function startExtraction() {
     const v = getFormValues();
-    if (!v.movie || !v.quote) { alert('Please enter a title and a quote.'); return; }
+    if (mode !== 'quote' && !v.movie) { alert('Please enter a title.'); return; }
+    if (!v.quote) { alert('Please enter a quote.'); return; }
     if (mode === 'file' && !v.file) {
       alert('Please wait for your media file to finish uploading, or drop a video/audio file into the file box above.');
       return;

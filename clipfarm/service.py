@@ -49,7 +49,7 @@ _jobs_lock = threading.Lock()
 # ── Request / response models ─────────────────────────────────────────────────
 
 class ExtractRequest(BaseModel):
-    movie: str
+    movie: str = ""    # empty string = quote-only mode (auto-identify title)
     quote: str
     output_path: str
     local_file: Optional[str] = None

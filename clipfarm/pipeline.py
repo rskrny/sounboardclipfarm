@@ -11,8 +11,20 @@ from .preflight import check as preflight_check
 ProgressCallback = Callable[[str, str], None]  # (stage, message)
 
 
+def _probe_duration(path: str) -> float:
+    import subprocess, json
+    try:
+        r = subprocess.run(
+            ["ffprobe", "-v", "quiet", "-print_format", "json", "-show_format", path],
+            capture_output=True, text=True, timeout=15,
+        )
+        return float(json.loads(r.stdout).get("format", {}).get("duration", 0))
+    except Exception:
+        return 0.0
+
+
 def run(
-    title: str,
+    title: str,        # empty string triggers quote-only identification mode
     quote: str,
     output_path: str,
     local_file: Optional[str] = None,
@@ -36,7 +48,46 @@ def run(
         if on_progress:
             on_progress(stage, message)
 
-    # Stage 0 — preflight (non-blocking warnings only; service layer handles blocking)
+    # Stage 0A — quote-only identification mode (title not provided)
+    if not title.strip():
+        _progress("identifying", f"No title given — searching for: '{quote}'…")
+        from .quote_identify import identify, QuoteIdentification
+        ident: QuoteIdentification = identify(quote, language=language)
+        _progress("identifying", f"Found: '{ident.title}' (via {ident.provider}, {ident.confidence:.0%} confidence)")
+        title = ident.title
+
+        # If the identifier already fetched the clip (GetYarn), go straight to extraction
+        if ident.media_path:
+            from .extract_clip import extract
+            from .models import RightsInfo
+            request = ClipRequest(
+                media_path=ident.media_path,
+                start_time=0.0,
+                end_time=_probe_duration(ident.media_path),
+                quote_text=quote,
+                match_confidence=ident.confidence,
+                subtitle_source="none",
+                padding_before_ms=0,
+                padding_after_ms=0,
+                sample_rate=sample_rate,
+                channels=channels,
+                bit_depth=16,
+                rights=RightsInfo(
+                    policy="review_needed",
+                    source_detail="getyarn_clip",
+                    provenance=f"getyarn.io title-free quote search: '{quote}'",
+                    conditions="Clip from GetYarn.io. Personal/non-commercial soundboard use.",
+                ),
+                provider=ident.provider,
+                media_type=media_type,
+            )
+            _progress("extraction", "Converting GetYarn clip to WAV…")
+            result = extract(request, output_path)
+            result.media_type = media_type
+            _progress("extraction", f"Clip saved: {result.output_path} ({result.duration_seconds:.2f}s)")
+            return result
+
+    # Stage 0B — preflight (non-blocking warnings only; service layer handles blocking)
     _progress("preflight", f"Validating request for '{title}'…")
     pf = preflight_check(
         title=title, quote=quote, local_file=local_file,
