@@ -6,6 +6,7 @@ from .models import ClipRequest, ClipResult
 from .fetch_transcript import get_transcript
 from .match_quote import find_quote
 from .source_media import resolve_media
+from .preflight import validate_request
 
 ProgressCallback = Callable[[str, str], None]  # (stage, message)
 
@@ -21,6 +22,9 @@ def run(
     padding_before_ms: int = 200,
     padding_after_ms: int = 200,
     language: str = "en",
+    media_type: str = "movie",
+    season: Optional[int] = None,
+    episode: Optional[int] = None,
     on_progress: Optional[ProgressCallback] = None,
 ) -> ClipResult:
     """Full pipeline: title + quote → .wav clip.
@@ -31,6 +35,10 @@ def run(
     def _progress(stage: str, message: str) -> None:
         if on_progress:
             on_progress(stage, message)
+
+    # Stage 0 — preflight
+    _progress("preflight", f"Validating request for '{title}'…")
+    validate_request(title, media_type=media_type, local_file=local_file)
 
     # Stage 1 — source media
     _progress("sourcing", f"Searching for '{title}'…")
@@ -71,12 +79,21 @@ def run(
         bit_depth=16,
         rights=media.rights,
         provider=media.source,  # identity string, not a file path
+        media_type=media_type,
+        season=season,
+        episode=episode,
     )
 
     # Stage 5 — extract clip
     _progress("extraction", f"Extracting {match.end_time - match.start_time:.2f}s clip…")
     from .extract_clip import extract
     result = extract(request, output_path)
+    
+    # Update result with TV hierarchy
+    result.media_type = media_type
+    result.season = season
+    result.episode = episode
+    
     _progress("extraction", f"Clip saved: {result.output_path} ({result.duration_seconds:.2f}s)")
 
     return result

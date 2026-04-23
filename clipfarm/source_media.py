@@ -92,7 +92,8 @@ class InternetArchiveSource:
                                 provenance=f"archive.org/{identifier} — {license_url}",
                             ),
                         )
-        except Exception:
+        except Exception as e:
+            # We could log this to a global diagnostic collector
             pass
         return None
 
@@ -160,6 +161,8 @@ class YouTubeSource:
 
             result = subprocess.run(cmd, capture_output=True, text=True, timeout=180)
             if result.returncode != 0:
+                stderr = result.stderr.strip() if result.stderr else "unknown error"
+                # We could log this to a global diagnostic collector if available
                 return None
 
             files = [

@@ -35,6 +35,8 @@ ProviderID = Literal[
 ]
 
 
+MediaType = Literal["movie", "tv_series", "other"]
+
 @dataclass
 class MediaResult:
     """Output from a MediaSource — a resolved local audio/video path."""
@@ -43,6 +45,9 @@ class MediaResult:
     source: ProviderID
     duration_seconds: float
     rights: Optional[RightsInfo] = None
+    media_type: MediaType = "movie"
+    season: Optional[int] = None
+    episode: Optional[int] = None
 
 
 @dataclass
@@ -72,6 +77,9 @@ class ClipRequest:
     bit_depth: int = 16
     rights: Optional[RightsInfo] = None   # carried from MediaResult
     provider: str = "unknown"             # ProviderID — never a file path
+    media_type: MediaType = "movie"
+    season: Optional[int] = None
+    episode: Optional[int] = None
 
 
 @dataclass
@@ -87,3 +95,6 @@ class ClipResult:
     quote_text: str
     match_confidence: float
     rights: Optional[RightsInfo] = None  # surface to UI/API — never suppress
+    media_type: MediaType = "movie"
+    season: Optional[int] = None
+    episode: Optional[int] = None

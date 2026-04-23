@@ -53,6 +53,9 @@ class ExtractRequest(BaseModel):
     padding_before_ms: int = 200
     padding_after_ms: int = 200
     language: str = "en"
+    media_type: str = "movie"
+    season: Optional[int] = None
+    episode: Optional[int] = None
 
 
 # ── Job helpers ───────────────────────────────────────────────────────────────
@@ -61,10 +64,11 @@ def _new_job(job_id: str, req: ExtractRequest) -> dict:
     return {
         "job_id": job_id,
         "status": "queued",           # queued | running | succeeded | failed
-        "stage": None,                # sourcing | transcript | matching | extraction
+        "stage": None,                # preflight | sourcing | transcript | matching | extraction
         "progress_message": "Job queued.",
         "result": None,               # ClipResult as dict when succeeded
         "error": None,                # error message string when failed
+        "actionable_hint": None,      # UI-correct next action hint
         "diagnostics": [],            # list of {"stage", "message"} entries
         "source": None,               # populated on success: provider, rights, provenance
         "request": req.model_dump(),
@@ -100,6 +104,9 @@ def _run_job(job_id: str, req: ExtractRequest) -> None:
             padding_before_ms=req.padding_before_ms,
             padding_after_ms=req.padding_after_ms,
             language=req.language,
+            media_type=req.media_type,
+            season=req.season,
+            episode=req.episode,
             on_progress=on_progress,
         )
         result_dict = asdict(result)
@@ -119,10 +126,12 @@ def _run_job(job_id: str, req: ExtractRequest) -> None:
             },
         )
     except Exception as exc:
+        actionable_hint = getattr(exc, "actionable_hint", None)
         _update_job(
             job_id,
             status="failed",
             error=str(exc),
+            actionable_hint=actionable_hint,
             progress_message=f"Failed: {exc}",
         )
         _append_diagnostic(job_id, _jobs[job_id].get("stage") or "unknown", f"ERROR: {exc}")
