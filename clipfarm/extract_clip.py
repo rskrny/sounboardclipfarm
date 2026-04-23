@@ -124,6 +124,7 @@ def extract(request: ClipRequest, output_path: str) -> ClipResult:
     )
 
     return ClipResult(
+        rights=request.rights,
         output_path=output_path,
         duration_seconds=actual_duration,
         sample_rate=request.sample_rate,

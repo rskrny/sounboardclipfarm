@@ -59,6 +59,12 @@ def main() -> None:
         print(f"Format:     {result.sample_rate}Hz / {result.bit_depth}-bit / {'mono' if result.channels == 1 else 'stereo'}")
         print(f"Confidence: {result.match_confidence:.0%}")
         print(f"Source:     {result.source_media}")
+        if result.rights:
+            r = result.rights
+            print(f"Rights:     [{r.policy.upper()}] {r.source_detail}")
+            if r.conditions:
+                print(f"            {r.conditions}")
+            print(f"            Provenance: {r.provenance}")
     except Exception as e:
         print(f"Error: {e}", file=sys.stderr)
         sys.exit(1)

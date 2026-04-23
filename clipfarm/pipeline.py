@@ -64,6 +64,7 @@ def run(
         sample_rate=sample_rate,
         channels=channels,
         bit_depth=16,
+        rights=media.rights,  # carry rights provenance through to output
     )
 
     # Stage 5 — extract clip (owned by codex / extract_clip.py)

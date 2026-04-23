@@ -2,13 +2,15 @@
 
 Sources tried in order:
 1. Local file path (user-provided — most reliable).
-2. Internet Archive (public-domain films only).
-3. YouTube: targeted clip search (title + quote) — finds published official scenes.
-4. YouTube: broad search (title + "official clip") — fallback for general scenes.
+2. Internet Archive (public-domain catalog).
+3. YouTube CC-licensed content (yt-dlp --match-filter license^=creativecommons).
+4. YouTube targeted clip search (title + quote), no license filter.
+5. YouTube general fallback (official clip, then full movie), no license filter.
 
-For mainstream copyrighted titles, sources 3 and 4 search for published clips
-rather than full movies, which are more likely to be officially available.
-Pass --file with a local copy for guaranteed results on any title.
+Every result carries a RightsInfo block with an explicit policy state:
+  allowed / allowed_with_conditions / review_needed / rejected
+
+Pass --file with a local copy for guaranteed results on any mainstream title.
 """
 
 from __future__ import annotations
@@ -16,7 +18,7 @@ import os
 import subprocess
 import tempfile
 from typing import Optional, Protocol
-from .models import MediaResult
+from .models import MediaResult, RightsInfo
 
 
 class MediaSource(Protocol):
@@ -25,7 +27,11 @@ class MediaSource(Protocol):
 
 
 class LocalFileSource:
-    """User supplies the file path directly."""
+    """User supplies the file path directly.
+
+    Policy: allowed_with_conditions — the user is responsible for ensuring they
+    have the right to use the file. We cannot verify; we flag it for transparency.
+    """
     name = "local_file"
 
     def __init__(self, file_path: str) -> None:
@@ -39,14 +45,20 @@ class LocalFileSource:
             title=title,
             source="local_file",
             duration_seconds=_probe_duration(self._path),
+            rights=RightsInfo(
+                policy="allowed_with_conditions",
+                source_detail="user_provided_file",
+                provenance=f"local path: {self._path}",
+                conditions="User is responsible for verifying they have rights to this file.",
+            ),
         )
 
 
 class InternetArchiveSource:
     """Search Internet Archive for public-domain films.
 
-    Only returns results for titles in the public domain catalog.
-    Mainstream modern films will not be found here — that is expected.
+    Policy: allowed — Internet Archive's public domain catalog is definitively
+    out of copyright. Only returns titles explicitly catalogued as public domain.
     """
     name = "internet_archive"
 
@@ -54,13 +66,15 @@ class InternetArchiveSource:
         try:
             import internetarchive as ia
             results = ia.search_items(
-                f'title:"{title}" AND mediatype:movies',
-                fields=["identifier", "title"],
+                f'title:"{title}" AND mediatype:movies AND subject:"public domain"',
+                fields=["identifier", "title", "licenseurl"],
             )
             items = list(results)
             if not items:
                 return None
-            identifier = items[0]["identifier"]
+            item_meta = items[0]
+            identifier = item_meta["identifier"]
+            license_url = item_meta.get("licenseurl", "public domain per archive.org catalog")
             item = ia.get_item(identifier)
             for f in item.get_files():
                 if f.name.lower().endswith((".mp4", ".ogv", ".avi", ".mkv", ".mp3")):
@@ -72,6 +86,11 @@ class InternetArchiveSource:
                             title=title,
                             source="internet_archive",
                             duration_seconds=_probe_duration(local_path),
+                            rights=RightsInfo(
+                                policy="allowed",
+                                source_detail="public_domain",
+                                provenance=f"archive.org/{identifier} — {license_url}",
+                            ),
                         )
         except Exception:
             pass
@@ -81,16 +100,18 @@ class InternetArchiveSource:
 class YouTubeSource:
     """Download audio from YouTube via yt-dlp.
 
-    When a quote is provided, searches for the specific scene (title + quote)
-    first — this targets published official clips and meme/highlight videos
-    that are far more likely to be accessible than a full movie upload.
+    Pass 1: CC-licensed content only (cleanest rights posture).
+    Pass 2: Targeted clip search by quote (published scenes, no license gate).
+    Pass 3: General fallback (official clip, full movie).
 
-    Falls back to a general official-clip search if the targeted search misses.
+    Policy is determined by what yt-dlp metadata returns for the found video.
+    CC videos → allowed or allowed_with_conditions.
+    No-license videos → review_needed (never silently promoted to allowed).
     """
     name = "youtube"
 
     def find(self, title: str, quote: Optional[str] = None) -> Optional[MediaResult]:
-        # Pass 1: CC-licensed content only (cleanest rights posture)
+        # Pass 1: CC-licensed content — cleanest rights posture
         if quote:
             result = self._try_query(title, f'ytsearch1:{title} "{quote}"', cc_only=True)
             if result:
@@ -99,7 +120,7 @@ class YouTubeSource:
         if result:
             return result
 
-        # Pass 2: targeted clip search (quote + scene), all results
+        # Pass 2: targeted clip search, all results
         if quote:
             for q in (f'ytsearch1:{title} "{quote}" scene', f'ytsearch1:{title} "{quote}"'):
                 result = self._try_query(title, q)
@@ -118,6 +139,8 @@ class YouTubeSource:
         try:
             out_dir = tempfile.mkdtemp(prefix="clipfarm_yt_")
             out_template = os.path.join(out_dir, "%(id)s.%(ext)s")
+            # Also dump metadata so we can read the license field
+            meta_file = os.path.join(out_dir, "meta.json")
             cmd = [
                 "yt-dlp",
                 "--no-playlist",
@@ -126,16 +149,57 @@ class YouTubeSource:
                 "--audio-format", "mp3",
                 "--output", out_template,
                 "--quiet",
+                "--dump-single-json",
             ]
             if cc_only:
-                # Filter to Creative Commons licensed uploads only
                 cmd += ["--match-filter", "license^=creativecommons"]
             cmd.append(query)
-            result = subprocess.run(
-                cmd, capture_output=True, text=True, timeout=180
+
+            # First: dump metadata only to check rights before downloading
+            meta_cmd = [
+                "yt-dlp", "--no-playlist", "--quiet",
+                "--dump-single-json",
+            ]
+            if cc_only:
+                meta_cmd += ["--match-filter", "license^=creativecommons"]
+            meta_cmd.append(query)
+
+            import json
+            meta_result = subprocess.run(
+                meta_cmd, capture_output=True, text=True, timeout=30
             )
-            if result.returncode != 0:
+            if meta_result.returncode != 0 or not meta_result.stdout.strip():
                 return None
+
+            try:
+                meta = json.loads(meta_result.stdout)
+            except json.JSONDecodeError:
+                return None
+
+            video_id = meta.get("id", "unknown")
+            video_title = meta.get("title", title)
+            license_str = meta.get("license") or ""
+            uploader = meta.get("uploader", "unknown")
+            webpage_url = meta.get("webpage_url", f"https://youtube.com/watch?v={video_id}")
+
+            rights = _classify_yt_rights(license_str, uploader, webpage_url)
+
+            # Now download audio
+            dl_cmd = [
+                "yt-dlp", "--no-playlist",
+                "--format", "bestaudio/best",
+                "--extract-audio", "--audio-format", "mp3",
+                "--output", out_template,
+                "--quiet",
+            ]
+            if cc_only:
+                dl_cmd += ["--match-filter", "license^=creativecommons"]
+            dl_cmd.append(query)
+
+            dl_result = subprocess.run(dl_cmd, capture_output=True, text=True, timeout=180)
+            if dl_result.returncode != 0:
+                return None
+
             files = [
                 os.path.join(out_dir, f)
                 for f in os.listdir(out_dir)
@@ -147,14 +211,61 @@ class YouTubeSource:
             duration = _probe_duration(local_path)
             if duration == 0.0:
                 return None
+
             return MediaResult(
                 file_path=local_path,
-                title=title,
+                title=video_title,
                 source="youtube",
                 duration_seconds=duration,
+                rights=rights,
             )
         except Exception:
             return None
+
+
+def _classify_yt_rights(license_str: str, uploader: str, url: str) -> RightsInfo:
+    """Map yt-dlp license metadata to an explicit RightsInfo policy."""
+    ls = license_str.lower()
+    provenance = f"yt-dlp metadata: uploader={uploader!r}, url={url}, license={license_str!r}"
+
+    if "creativecommons.org/licenses/by/4" in ls or "creativecommons.org/licenses/by/2" in ls:
+        return RightsInfo(
+            policy="allowed",
+            source_detail=f"CC-BY ({license_str})",
+            provenance=provenance,
+            conditions="Attribution required: credit the uploader.",
+        )
+    if "creativecommons.org/publicdomain/zero" in ls or "cc0" in ls:
+        return RightsInfo(
+            policy="allowed",
+            source_detail="CC0 / public domain dedication",
+            provenance=provenance,
+        )
+    if "creativecommons" in ls and "nc" in ls:
+        return RightsInfo(
+            policy="allowed_with_conditions",
+            source_detail=f"CC Non-Commercial ({license_str})",
+            provenance=provenance,
+            conditions="Non-commercial use only. Attribution required.",
+        )
+    if "creativecommons" in ls:
+        return RightsInfo(
+            policy="allowed_with_conditions",
+            source_detail=f"Creative Commons ({license_str})",
+            provenance=provenance,
+            conditions="Review specific CC license terms before use.",
+        )
+    # No explicit license detected — must not be promoted to allowed
+    return RightsInfo(
+        policy="review_needed",
+        source_detail="no_license_detected",
+        provenance=provenance,
+        conditions=(
+            "No explicit license found. Verify rights before use. "
+            "May qualify as fair use for non-commercial/transformative purposes — "
+            "human review required."
+        ),
+    )
 
 
 def resolve_media(
@@ -164,8 +275,10 @@ def resolve_media(
 ) -> MediaResult:
     """Try each source in priority order and return the first hit.
 
-    Raises RuntimeError with a detailed message listing what was tried
-    if no source succeeds. Pass quote to enable targeted YouTube clip search.
+    The returned MediaResult always carries a RightsInfo block. Callers must
+    surface this to the user — never suppress the policy or conditions fields.
+
+    Raises RuntimeError with diagnostics listing each source tried if all fail.
     """
     sources: list = []
     if local_file:
