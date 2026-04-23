@@ -220,27 +220,29 @@ def resolve_media(
 
     Raises RuntimeError with diagnostics listing each source tried if all fail.
     """
-    sources: list = []
+    attempts = []
+    
+    # 1. Local File
     if local_file:
-        sources.append(LocalFileSource(local_file))
-    sources.append(InternetArchiveSource())
-    sources.append(YouTubeSource())
-
-    tried: list[str] = []
-    for source in sources:
-        tried.append(source.name)
-        result = source.find(title, quote=quote)
+        source = LocalFileSource(local_file)
+        result = source.find(title)
         if result:
             return result
+        attempts.append(f"local_file: Not found at {local_file}")
+    else:
+        attempts.append("local_file: No path provided")
 
-    tried_str = ", ".join(tried)
-    raise RuntimeError(
-        f"Could not source media for '{title}'.\n"
-        f"  Sources tried: {tried_str}\n"
-        f"  For mainstream films, use --file to supply a local copy:\n"
-        f"    python cli.py --movie \"{title}\" --quote \"...\" "
-        f"--output out.wav --file \"{title.lower().replace(' ', '_')}.mp4\""
-    )
+    # Skip remote sources if requested
+    if os.environ.get("CLIPFARM_SKIP_REMOTE") == "1":
+        report = "\n".join(f"- {a}" for a in attempts)
+        raise RuntimeError(
+            f"Could not source media for '{title}'. Remote sources skipped per env var.\n"
+            f"Attempts:\n{report}"
+        )
+
+    # 2. Internet Archive
+    source_ia = InternetArchiveSource()
+...
 
 
 def _probe_duration(path: str) -> float:
