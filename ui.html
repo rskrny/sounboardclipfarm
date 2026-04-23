@@ -139,10 +139,31 @@
 
   <!-- Mode: I have a file (primary, reliable) -->
   <div id="mode-file">
-    <div class="field">
-      <label>Movie or TV Show title</label>
-      <input id="f-movie" type="text" placeholder="e.g. The Office" />
+    <div class="row">
+      <div class="field">
+        <label>Media Type</label>
+        <select id="f-type" onchange="toggleTvFields('file')">
+          <option value="movie" selected>Movie</option>
+          <option value="tv_series">TV Series</option>
+        </select>
+      </div>
+      <div class="field">
+        <label>Title</label>
+        <input id="f-movie" type="text" placeholder="e.g. The Office" />
+      </div>
     </div>
+
+    <div id="f-tv-row" class="row" style="display:none">
+      <div class="field">
+        <label>Season</label>
+        <input id="f-season" type="number" placeholder="1" min="1" />
+      </div>
+      <div class="field">
+        <label>Episode</label>
+        <input id="f-episode" type="number" placeholder="1" min="1" />
+      </div>
+    </div>
+
     <div class="field">
       <label>Quote or phrase</label>
       <input id="f-quote" type="text" placeholder="e.g. That's what she said" />
@@ -279,6 +300,11 @@
     document.getElementById('tab-discover').classList.toggle('active', m === 'discover');
   }
 
+  function toggleTvFields(m) {
+    const type = document.getElementById(m === 'file' ? 'f-type' : 'd-type').value;
+    document.getElementById(m === 'file' ? 'f-tv-row' : 'd-tv-row').style.display = type === 'tv_series' ? 'grid' : 'none';
+  }
+
   function handleFileChosen(input) {
     if (!input.files.length) return;
     const f = input.files[0];
@@ -321,7 +347,10 @@
   function getFormValues() {
     if (mode === 'file') {
       return {
+        type:   document.getElementById('f-type').value,
         movie:  document.getElementById('f-movie').value.trim(),
+        season: parseInt(document.getElementById('f-season').value) || null,
+        episode:parseInt(document.getElementById('f-episode').value) || null,
         quote:  document.getElementById('f-quote').value.trim(),
         output: document.getElementById('f-output').value.trim() || 'clip.wav',
         file:   chosenFilePath,
@@ -333,7 +362,10 @@
       };
     } else {
       return {
+        type:   document.getElementById('d-type').value,
         movie:  document.getElementById('d-movie').value.trim(),
+        season: parseInt(document.getElementById('d-season').value) || null,
+        episode:parseInt(document.getElementById('d-episode').value) || null,
         quote:  document.getElementById('d-quote').value.trim(),
         output: document.getElementById('d-output').value.trim() || 'clip.wav',
         file: null, srt: null, sr: 44100, ch: 1, pb: 200, pa: 200,
@@ -354,6 +386,7 @@
       local_file: v.file || null, local_srt: v.srt || null,
       sample_rate: v.sr, channels: v.ch,
       padding_before_ms: v.pb, padding_after_ms: v.pa,
+      media_type: v.type, season: v.season, episode: v.episode,
     };
 
     // Pre-submit preflight check — gives the user a clear message before wasting time
