@@ -354,6 +354,7 @@
       local_file: v.file || null, local_srt: v.srt || null,
       sample_rate: v.sr, channels: v.ch,
       padding_before_ms: v.pb, padding_after_ms: v.pa,
+      media_type: mode === 'tv' ? 'tv_series' : 'movie',
     };
 
     // Pre-submit preflight check — gives the user a clear message before wasting time
@@ -375,15 +376,10 @@
         setRunning(false);
         return;
       }
-      // Non-blocking warning: show it, then proceed
       if (pf.decision !== 'ready') {
         showStatusCard();
         clearStatus();
-        const warn = document.createElement('div');
-        warn.className = 'dline';
-        warn.style.color = '#f5a623';
-        warn.innerHTML = `<span class="dt">[preflight]</span>${esc(pf.user_message)}`;
-        document.getElementById('diag').appendChild(warn);
+        showPreflightBlock(pf.decision, pf.user_message, false);
       } else {
         showStatusCard();
         clearStatus();
@@ -409,6 +405,18 @@
       showError('Connection failed', `Could not reach the API server at ${api()}.\n\nMake sure you ran: python serve.py`, null);
       setRunning(false);
     });
+  }
+
+  function showPreflightBlock(decision, message, blocking) {
+    const colors = { needs_episode_scope: 'var(--red)', needs_local_file: 'var(--yellow)' };
+    const color = colors[decision] || 'var(--yellow)';
+    const el = document.getElementById('err-block');
+    el.innerHTML = `<div class="err-box" style="border-color:${color}">
+      <div class="err-title" style="color:${color}">${blocking ? '⛔ Action required' : '⚠ Heads up'}</div>
+      <div class="err-body">${esc(message)}</div>
+      ${!blocking ? '<div class="err-action" style="color:var(--text-dim);font-size:0.76rem">Attempting anyway…</div>' : ''}
+    </div>`;
+    el.style.display = 'block';
   }
 
   function schedulePoll() { clearTimeout(pollTimer); pollTimer = setTimeout(pollJob, 900); }
@@ -462,10 +470,11 @@
 
   function handleJobError(job) {
     const msg = job.error || 'Unknown error.';
-    const isSourcingFail = msg.includes('source media') || msg.includes('authorized');
-    const action = isSourcingFail
+    const hint = job.actionable_hint;
+    const isSourcingFail = msg.includes('source media') || msg.includes('authorized') || msg.includes('Upload');
+    const action = hint || (isSourcingFail
       ? 'Switch to the <strong>I have a file</strong> tab and drop in a video or audio file of this title.'
-      : null;
+      : null);
     const title = isSourcingFail ? 'Could not find this title automatically' : 'Extraction failed';
     showError(title, msg, action);
   }
