@@ -131,6 +131,7 @@ def extract(request: ClipRequest, output_path: str) -> ClipResult:
         channels=request.channels,
         bit_depth=request.bit_depth,
         source_media=request.media_path,
+        provider=request.provider,
         quote_text=request.quote_text,
         match_confidence=request.match_confidence,
     )

@@ -61,7 +61,8 @@ class ClipRequest:
     sample_rate: int = 44100
     channels: int = 1
     bit_depth: int = 16
-    rights: Optional[RightsInfo] = None  # carried from MediaResult
+    rights: Optional[RightsInfo] = None   # carried from MediaResult
+    provider: str = "unknown"             # MediaResult.source identity (not a path)
 
 
 @dataclass
@@ -72,7 +73,8 @@ class ClipResult:
     sample_rate: int
     channels: int
     bit_depth: int
-    source_media: str
+    source_media: str                     # temp/local file path — internal detail
+    provider: str                         # source identity: local_file | internet_archive | youtube
     quote_text: str
     match_confidence: float
     rights: Optional[RightsInfo] = None  # surface to UI/API — never suppress

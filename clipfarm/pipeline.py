@@ -70,6 +70,7 @@ def run(
         channels=channels,
         bit_depth=16,
         rights=media.rights,
+        provider=media.source,  # identity string, not a file path
     )
 
     # Stage 5 — extract clip

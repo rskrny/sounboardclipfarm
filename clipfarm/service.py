@@ -104,22 +104,19 @@ def _run_job(job_id: str, req: ExtractRequest) -> None:
         )
         result_dict = asdict(result)
         rights = result_dict.pop("rights", None)
-        source_block = None
-        if rights:
-            source_block = {
-                "provider": result_dict.get("source_media", "unknown"),
-                "source_detail": rights.get("source_detail"),
-                "provenance_evidence": rights.get("provenance"),
-                "rights_status": rights.get("policy"),
-                "conditions": rights.get("conditions") or "",
-            }
         _update_job(
             job_id,
             status="succeeded",
             stage="done",
             progress_message="Clip extracted successfully.",
             result=result_dict,
-            source=source_block,
+            source={
+                "provider": result_dict.get("provider", "unknown"),
+                "source_detail": rights.get("source_detail") if rights else None,
+                "provenance_evidence": rights.get("provenance") if rights else None,
+                "rights_status": rights.get("policy") if rights else None,
+                "conditions": (rights.get("conditions") or "") if rights else "",
+            },
         )
     except Exception as exc:
         _update_job(
