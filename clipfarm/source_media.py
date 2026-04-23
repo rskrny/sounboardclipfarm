@@ -1,9 +1,12 @@
 """Resolve a movie/show title to a local audio file.
 
 Sources tried in order:
-1. Local file path (user-provided, fully authorized).
-2. Internet Archive (public domain catalog, legal).
-3. Official YouTube uploads via yt-dlp (authorized channel whitelist).
+1. Local file path (user-provided — most reliable).
+2. Internet Archive (public-domain films only).
+3. YouTube search via yt-dlp (audio-only download).
+
+For mainstream copyrighted titles, only sources 1 and 3 are likely to
+succeed. Use --file to supply a copy you already have for guaranteed results.
 """
 
 from __future__ import annotations
@@ -15,11 +18,13 @@ from .models import MediaResult
 
 
 class MediaSource(Protocol):
+    name: str
     def find(self, title: str) -> Optional[MediaResult]: ...
 
 
 class LocalFileSource:
     """User supplies the file path directly."""
+    name = "local_file"
 
     def __init__(self, file_path: str) -> None:
         self._path = file_path
@@ -36,7 +41,12 @@ class LocalFileSource:
 
 
 class InternetArchiveSource:
-    """Search Internet Archive for public-domain films."""
+    """Search Internet Archive for public-domain films.
+
+    Only returns results for titles in the public domain catalog.
+    Mainstream modern films will not be found here — that is expected.
+    """
+    name = "internet_archive"
 
     def find(self, title: str) -> Optional[MediaResult]:
         try:
@@ -50,7 +60,6 @@ class InternetArchiveSource:
                 return None
             identifier = items[0]["identifier"]
             item = ia.get_item(identifier)
-            # Find first mp4/ogg/avi file
             for f in item.get_files():
                 if f.name.lower().endswith((".mp4", ".ogv", ".avi", ".mkv", ".mp3")):
                     url = f"https://archive.org/download/{identifier}/{f.name}"
@@ -67,38 +76,30 @@ class InternetArchiveSource:
         return None
 
 
-# YouTube official channel IDs for major studios (public uploads only)
-_OFFICIAL_CHANNELS = [
-    "UCi8e0iOVk1fEOogdfu4YgfA",  # Paramount Movies
-    "UCzWQYUVCpZqtN93H8RR44Qw",  # Warner Bros.
-    "UCWX3yGbODI3HLxJCEQXCgXg",  # MGM
-    "UC6107grRI4m0o2-emgoDnAA",  # StudiocanalUK
-    "UCeY0bbntWzzVIaj2z3QigXg",  # NBC
-    "UCo8bcnLyZH8tBIH9V1mLgqQ",  # ABC
-]
+class YouTubeSource:
+    """Download audio-only from YouTube via yt-dlp.
 
-
-class YouTubeOfficialSource:
-    """Download audio-only from official studio YouTube channels via yt-dlp."""
+    Searches for the title and downloads the best audio match.
+    Use this with titles you have a legitimate right to access.
+    """
+    name = "youtube"
 
     def find(self, title: str) -> Optional[MediaResult]:
         try:
             out_dir = tempfile.mkdtemp(prefix="clipfarm_yt_")
             out_template = os.path.join(out_dir, "%(id)s.%(ext)s")
-            channel_filter = "|".join(_OFFICIAL_CHANNELS)
             cmd = [
                 "yt-dlp",
                 "--no-playlist",
-                "--match-filter", f"channel_id ~= '{channel_filter}'",
                 "--format", "bestaudio/best",
                 "--extract-audio",
                 "--audio-format", "mp3",
                 "--output", out_template,
-                "--no-warnings",
-                f"ytsearch1:{title} full movie official",
+                "--quiet",
+                f"ytsearch1:{title} full movie",
             ]
             result = subprocess.run(
-                cmd, capture_output=True, text=True, timeout=120
+                cmd, capture_output=True, text=True, timeout=180
             )
             if result.returncode != 0:
                 return None
@@ -110,11 +111,14 @@ class YouTubeOfficialSource:
             if not files:
                 return None
             local_path = files[0]
+            duration = _probe_duration(local_path)
+            if duration == 0.0:
+                return None
             return MediaResult(
                 file_path=local_path,
                 title=title,
-                source="youtube_official",
-                duration_seconds=_probe_duration(local_path),
+                source="youtube",
+                duration_seconds=duration,
             )
         except Exception:
             return None
@@ -126,21 +130,29 @@ def resolve_media(
 ) -> MediaResult:
     """Try each source in priority order and return the first hit.
 
-    Raises RuntimeError if no source resolves the title.
+    Raises RuntimeError with a detailed message listing what was tried
+    if no source succeeds. The message includes the --file suggestion.
     """
     sources: list[MediaSource] = []
     if local_file:
         sources.append(LocalFileSource(local_file))
     sources.append(InternetArchiveSource())
-    sources.append(YouTubeOfficialSource())
+    sources.append(YouTubeSource())
 
+    tried: list[str] = []
     for source in sources:
+        tried.append(source.name)
         result = source.find(title)
         if result:
             return result
 
+    tried_str = ", ".join(tried)
     raise RuntimeError(
-        f"Could not source media for '{title}' from any authorized provider."
+        f"Could not source media for '{title}'.\n"
+        f"  Sources tried: {tried_str}\n"
+        f"  For mainstream films, use --file to supply a local copy:\n"
+        f"    python cli.py --movie \"{title}\" --quote \"...\" "
+        f"--output out.wav --file /path/to/{title.lower().replace(' ', '_')}.mp4"
     )
 
 

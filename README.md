@@ -8,8 +8,13 @@ Extract any movie or TV quote as a WAV audio clip. Give it a title and a line �
 pip install -r requirements.txt
 # Requires ffmpeg installed on PATH
 
-python cli.py --movie "The Big Lebowski" --quote "The dude abides" --output dude_abides.wav
+python cli.py --movie "The Big Lebowski" --quote "The dude abides" --output dude_abides.wav --file lebowski.mp4
 ```
+
+> **Windows users:** Always wrap paths that contain spaces in double quotes.
+> ```
+> python cli.py --movie "Bee Movie" --quote "Ya like jazz" --output "C:\Users\name\clip farm\output\clip.wav"
+> ```
 
 ## Usage
 
@@ -33,9 +38,17 @@ Options:
 
 ## Media sources (in priority order)
 
-1. **Local file** (`--file`) — your own media, no external calls made
-2. **Internet Archive** — public domain films, fully legal
-3. **Official YouTube uploads** — authorized studio channels only, via yt-dlp
+1. **Local file** (`--file`) — your own media, most reliable, always use this for mainstream titles
+2. **Internet Archive** — public domain films only (pre-1928 and similar); mainstream titles will not be found here
+3. **YouTube** — searches YouTube via yt-dlp and downloads the best audio match
+
+For any well-known copyrighted film (Big Lebowski, Bee Movie, etc.) the tool
+cannot guarantee finding it automatically. Pass `--file` with a copy you already
+have for a guaranteed result:
+
+```
+python cli.py --movie "The Big Lebowski" --quote "The dude abides" --output clip.wav --file lebowski.mp4
+```
 
 ## Transcript sources (in priority order)
 
