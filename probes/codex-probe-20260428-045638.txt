@@ -1,0 +1,1 @@
+Codex PR-create probe at 20260428-045638. This file validates branch push, PR creation, and immediate close.
